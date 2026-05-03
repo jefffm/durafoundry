@@ -13,6 +13,14 @@ export const ArtifactUriSchema = v.string();
 export const RepoIdSchema = v.string();
 export const PlanSnapshotIdSchema = v.string();
 
+export const ArtifactRefSchema = v.object({
+  uri: ArtifactUriSchema,
+  kind: v.string(),
+  sha256: v.optional(v.string()),
+  createdAt: IsoTimestampSchema,
+  producer: v.string(),
+});
+
 export const RequirementPrioritySchema = v.picklist(['must', 'should', 'could']);
 export const ConstraintKindSchema = v.picklist([
   'technical',
@@ -494,6 +502,7 @@ export type AttemptId = v.InferOutput<typeof AttemptIdSchema>;
 export type ArtifactUri = v.InferOutput<typeof ArtifactUriSchema>;
 export type RepoId = v.InferOutput<typeof RepoIdSchema>;
 export type PlanSnapshotId = v.InferOutput<typeof PlanSnapshotIdSchema>;
+export type ArtifactRef = v.InferOutput<typeof ArtifactRefSchema>;
 export type Requirement = v.InferOutput<typeof RequirementSchema>;
 export type Constraint = v.InferOutput<typeof ConstraintSchema>;
 export type AcceptanceCriterion = v.InferOutput<typeof AcceptanceCriterionSchema>;
