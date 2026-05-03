@@ -14,9 +14,13 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
     "valibot": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0"
   }
 }

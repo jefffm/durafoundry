@@ -675,3 +675,184 @@ export type HumanGapResult = v.InferOutput<typeof HumanGapResultSchema>;
 export interface ApprovalDecision<TPayload> extends ApprovalDecisionBase {
   payload?: TPayload;
 }
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export function validatePlanDAG(plan: PlanDAG): ValidationResult {
+  const errors: string[] = [];
+  const nodeIds = new Set<NodeId>();
+  const milestoneIds = new Set<MilestoneId>();
+
+  for (const milestone of plan.milestones) {
+    if (milestoneIds.has(milestone.id)) {
+      errors.push(`Duplicate milestone id: ${milestone.id}`);
+    }
+    milestoneIds.add(milestone.id);
+
+    if (milestone.acceptanceCriteria.length === 0) {
+      errors.push(`Milestone ${milestone.id} must have acceptance criteria`);
+    }
+  }
+
+  for (const node of plan.nodes) {
+    if (nodeIds.has(node.id)) {
+      errors.push(`Duplicate node id: ${node.id}`);
+    }
+    nodeIds.add(node.id);
+
+    if (!milestoneIds.has(node.milestoneId)) {
+      errors.push(`Node ${node.id} references missing milestone ${node.milestoneId}`);
+    }
+
+    if (node.bodyUri.length === 0) {
+      errors.push(`Node ${node.id} must have a body URI`);
+    }
+
+    if (node.acceptanceCriteria.length === 0) {
+      errors.push(`Node ${node.id} must have acceptance criteria`);
+    }
+
+    if ((node.kind === 'code' || node.kind === 'test') && node.verificationCommands.length === 0) {
+      errors.push(`Node ${node.id} must have verification commands`);
+    }
+
+    if (
+      (node.riskLevel === 'high' || node.riskLevel === 'critical') &&
+      node.verificationCommands.length === 0
+    ) {
+      errors.push(`High-risk node ${node.id} must have verification commands`);
+    }
+  }
+
+  for (const milestone of plan.milestones) {
+    for (const nodeId of milestone.nodeIds) {
+      if (!nodeIds.has(nodeId)) {
+        errors.push(`Milestone ${milestone.id} references missing node ${nodeId}`);
+      }
+    }
+  }
+
+  for (const node of plan.nodes) {
+    const milestone = plan.milestones.find((candidate) => candidate.id === node.milestoneId);
+    if (milestone && !milestone.nodeIds.includes(node.id)) {
+      errors.push(`Node ${node.id} is not listed in milestone ${node.milestoneId}`);
+    }
+  }
+
+  const adjacency = new Map<NodeId, NodeId[]>();
+  for (const nodeId of nodeIds) {
+    adjacency.set(nodeId, []);
+  }
+
+  for (const edge of plan.edges) {
+    if (!nodeIds.has(edge.from)) {
+      errors.push(`Edge references missing from-node ${edge.from}`);
+    }
+    if (!nodeIds.has(edge.to)) {
+      errors.push(`Edge references missing to-node ${edge.to}`);
+    }
+    if (nodeIds.has(edge.from) && nodeIds.has(edge.to)) {
+      adjacency.get(edge.from)?.push(edge.to);
+    }
+  }
+
+  errors.push(...detectCycles(adjacency));
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validatePlanSnapshotManifest(
+  plan: PlanDAG,
+  manifest: PlanSnapshotManifest,
+): ValidationResult {
+  const errors: string[] = [];
+
+  if (manifest.planJson.kind !== 'plan-json') {
+    errors.push('Snapshot manifest planJson entry must have kind plan-json');
+  }
+
+  const nodeIds = new Set(plan.nodes.map((node) => node.id));
+  const manifestNodeIds = new Set(Object.keys(manifest.nodeBodies));
+  for (const node of plan.nodes) {
+    const body = manifest.nodeBodies[node.id];
+    if (!body) {
+      errors.push(`Snapshot manifest is missing node body for ${node.id}`);
+      continue;
+    }
+    if (body.kind !== 'node-body') {
+      errors.push(`Snapshot manifest node body ${node.id} must have kind node-body`);
+    }
+    if (body.uri !== node.bodyUri) {
+      errors.push(`Snapshot manifest node body ${node.id} URI does not match plan bodyUri`);
+    }
+  }
+  for (const nodeId of manifestNodeIds) {
+    if (!nodeIds.has(nodeId)) {
+      errors.push(`Snapshot manifest has extra node body for ${nodeId}`);
+    }
+  }
+
+  const milestoneIds = new Set(plan.milestones.map((milestone) => milestone.id));
+  const manifestMilestoneIds = new Set(Object.keys(manifest.milestoneBodies));
+  for (const milestone of plan.milestones) {
+    const body = manifest.milestoneBodies[milestone.id];
+    if (!body) {
+      errors.push(`Snapshot manifest is missing milestone body for ${milestone.id}`);
+      continue;
+    }
+    if (body.kind !== 'milestone-body') {
+      errors.push(`Snapshot manifest milestone body ${milestone.id} must have kind milestone-body`);
+    }
+    if (milestone.bodyUri && body.uri !== milestone.bodyUri) {
+      errors.push(`Snapshot manifest milestone body ${milestone.id} URI does not match plan bodyUri`);
+    }
+  }
+  for (const milestoneId of manifestMilestoneIds) {
+    if (!milestoneIds.has(milestoneId)) {
+      errors.push(`Snapshot manifest has extra milestone body for ${milestoneId}`);
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+function detectCycles(adjacency: Map<NodeId, NodeId[]>): string[] {
+  const errors: string[] = [];
+  const visiting = new Set<NodeId>();
+  const visited = new Set<NodeId>();
+
+  function visit(nodeId: NodeId, path: NodeId[]): void {
+    if (visiting.has(nodeId)) {
+      const cycleStart = path.indexOf(nodeId);
+      const cyclePath = path.slice(cycleStart).join(' -> ');
+      errors.push(`Plan DAG contains cycle: ${cyclePath}`);
+      return;
+    }
+
+    if (visited.has(nodeId)) {
+      return;
+    }
+
+    visiting.add(nodeId);
+    for (const nextNodeId of adjacency.get(nodeId) ?? []) {
+      visit(nextNodeId, [...path, nextNodeId]);
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+  }
+
+  for (const nodeId of adjacency.keys()) {
+    visit(nodeId, [nodeId]);
+  }
+
+  return errors;
+}
