@@ -41,6 +41,39 @@ For every chunk:
 11. Commit and push `main` after each completed chunk.
 12. Do not mark a chunk complete if acceptance criteria are only partially met.
 
+## Autonomous Queue Policy
+
+This plan is intended to run under Codex `/goal` in a risk-based autonomous queue.
+The agent may continue from one chunk to the next without waiting for human approval only when all of these conditions are true:
+
+- The chunk completed exactly against its acceptance criteria.
+- The worktree is clean after commit and push.
+- All validation commands for the chunk passed.
+- `$fresh-eyes` or a manual equivalent review found no unresolved issues.
+- `progress.md` and this plan both identify the next chunk.
+- The next chunk is not listed as a human review gate below.
+
+Stop immediately and report status instead of continuing when:
+
+- A validation command fails and the fix is not obvious within the current chunk scope.
+- A review or judge finding identifies a product, safety, data-loss, or architecture risk.
+- A required change falls outside the current chunk's write scope.
+- Temporal test infrastructure cannot run honestly in the local environment.
+- The implementation would need to target a non-fixture repository.
+- The next chunk is a human review gate.
+
+Human review gates:
+
+- Before Chunk 4, because it replaces the CLI's direct scaffold path with real Temporal Client/Worker orchestration.
+- Before Chunk 7, because it declares final Temporal-backed fixture acceptance and updates the hardening review.
+- After Chunk 7, before starting any work outside this plan.
+
+Suggested autonomous `/goal` prompt:
+
+```text
+/goal Execute docs/execution-plan-temporal-v0.md as a risk-based autonomous queue. Start at the Next chunk recorded in docs/execution-plan-temporal-v0.md and progress.md. For each chunk, read progress.md first, execute only that chunk's write scope and acceptance criteria, run its validation commands preferably through nix develop where toolchain binaries are involved, run $fresh-eyes or a manual equivalent if unavailable, fix every finding, update progress.md and docs/execution-plan-temporal-v0.md, commit and push main, then continue to the next chunk only if the Autonomous Queue Policy allows it. Stop and report status before any human review gate, unresolved validation failure, out-of-scope change, or dishonest Temporal test shortcut.
+```
+
 The most important invariant:
 
 > The fixture demo must prove Temporal owns orchestration. The CLI may create the fixture repo and submit approvals, but it must not execute the DAG by calling scaffold functions directly.

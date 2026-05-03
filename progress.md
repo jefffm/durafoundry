@@ -12,6 +12,29 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Chunk Log
 
+### Temporal V0 Autonomous Queue Setup
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added an Autonomous Queue Policy to `docs/execution-plan-temporal-v0.md`.
+- The policy allows Codex `/goal` to continue chunk-by-chunk after clean validation, clean review, committed progress, and pushed `main`.
+- The policy requires a stop instead of continuing when validation fails, review finds unresolved risk, work falls outside scope, Temporal cannot be tested honestly, or work would target a non-fixture repository.
+- Human review gates are explicit before Chunk 4, before Chunk 7, and after Chunk 7.
+- Added a reusable autonomous `/goal` prompt to the plan.
+
+Validation evidence:
+
+- Documentation-only change.
+- `git diff --check` passed before commit.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: without explicit gates, an autonomous `/goal` could replace CLI orchestration or declare final acceptance without human review.
+- Fix: the plan now defines mandatory stop points before Chunk 4 and Chunk 7.
+
 ### Temporal V0 Chunk 0: Nix Temporal Environment Baseline
 
 Status: complete.
