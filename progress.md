@@ -5,12 +5,51 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 2, Real FactoryRunWorkflow End-To-End State Machine.
-- Next chunk: Temporal V0 Chunk 3, Activity Registration For Fixture Runtime.
+- Last completed chunk: Temporal V0 Chunk 3, Activity Registration For Fixture Runtime.
+- Next chunk: Temporal V0 Chunk 4, Temporal CLI Worker And Client Path. Human review gate before starting.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 3: Activity Registration For Fixture Runtime
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added `createFixtureActivityMap`, a reusable Activity implementation map whose keys match the workflow proxy contracts.
+- The Activity map wraps:
+  - `runFakePlanner`
+  - `runFakeCoder`
+  - fixture verification result generation
+  - `commitNodeChanges`
+  - `runFakeReviewer`
+  - `runFakeJudge`
+  - `mergeNodeCommit`
+  - `cleanupNodeWorktree`
+  - `runFakeBroadReviewer`
+  - `runFakeBroadJudge`
+- Moved `@durafoundry/fake-agent-activities` and `@durafoundry/git-activities` to workflow runtime dependencies because the exported Activity map imports them.
+- Added a Temporal integration test that registers the real fixture Activity map with a Worker, starts `factoryRunWorkflow`, waits for plan approval, approves through a Temporal Update, executes the fixture DAG, and completes.
+- The integration test proves a generated fixture repository under the artifact root was used.
+- The integration test proves real node commits and merge commits exist in the generated fixture repository.
+- The integration test proves cleanup removed the factory worktrees.
+- The integration test proves fixture files on trunk contain the fake implementation output.
+
+Validation evidence:
+
+- `nix develop -c npm run typecheck --workspace @durafoundry/workflows` passed.
+- `nix develop -c npm test --workspace @durafoundry/workflows -- --test-name-pattern "activity|fixture|git|temporal"` passed.
+- `nix develop -c just validate` passed.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the fixture Activity map imports fake-agent and git Activity packages at runtime, so keeping those packages in devDependencies would make the exported runtime helper fragile.
+- Fix: moved `@durafoundry/fake-agent-activities` and `@durafoundry/git-activities` into workflow dependencies.
+- Finding: the Activity map could accidentally rely on hidden path globals.
+- Fix: planner repo/trunk/artifact paths come from `FactoryRunInput.runtime`, while node/git/artifact paths come from Activity inputs.
 
 ### Temporal V0 Chunk 2: Real FactoryRunWorkflow End-To-End State Machine
 

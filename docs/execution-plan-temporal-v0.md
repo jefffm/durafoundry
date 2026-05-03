@@ -15,8 +15,8 @@ Do not add Flue-backed agents, dashboard/API work, protected repository support,
 
 ## Execution Status
 
-- Last completed chunk: Chunk 2, Real FactoryRunWorkflow End-To-End State Machine.
-- Next chunk: Chunk 3, Activity Registration For Fixture Runtime.
+- Last completed chunk: Chunk 3, Activity Registration For Fixture Runtime.
+- Next chunk: Chunk 4, Temporal CLI Worker And Client Path. Human review gate before starting.
 - Progress log: `progress.md`.
 
 ## Operating Rules
