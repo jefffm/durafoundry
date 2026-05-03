@@ -4,12 +4,40 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 2, Fake Agent Activities.
-- Next chunk: Chunk 3, Temporal Workflow Scaffold.
+- Last completed chunk: Chunk 3, Temporal Workflow Scaffold.
+- Next chunk: Chunk 4, Plan Approval And Snapshot Execution.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 3: Temporal Workflow Scaffold
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added `@durafoundry/workflows`.
+- Defined deterministic-safe workflow contracts in `contracts.ts`.
+- Added `factoryRunWorkflow` with typed Temporal Activity proxy, query handler, and scaffold Update handlers for plan approval/rejection/change request, pause/resume, cancel node, gate override, retry from state, skip delay, and human follow-up DAG request.
+- Added a deterministic scaffold harness in `scaffold.ts` that mirrors workflow state transitions without needing Temporal client/worker test dependencies.
+- Tests verify a mocked factory run reaches `waiting_for_plan_approval`, exposes stable state, approves a matching plan, pauses, records human follow-up DAG requests, and rejects approval when not waiting.
+- Workflow code imports only `@temporalio/workflow`, domain types, and deterministic local scaffold helpers; Node-only test code is not imported by workflow code.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/workflows` passed.
+- `npm test --workspace @durafoundry/workflows` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged package diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: using Temporal client/worker/testing packages introduced an unfixed moderate `uuid` advisory through `@temporalio/client`.
+- Fix: switched tests to the allowed deterministic workflow harness path and kept runtime workflow code dependent only on `@temporalio/workflow`, restoring `npm audit` to 0 vulnerabilities.
 
 ### Chunk 2: Fake Agent Activities
 
@@ -90,4 +118,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 3 from `docs/execution-plan-v0.md`: add the Temporal TypeScript workflow package and test harness with deterministic-safe workflow code and mocked Activities.
+Start Chunk 4 from `docs/execution-plan-v0.md`: implement plan iteration, approval, immutable snapshot creation, and stale approval rejection in the workflow slice.

@@ -1,0 +1,29 @@
+{
+  "name": "@durafoundry/workflows",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "pretypecheck": "npm run build --workspace @durafoundry/domain",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "npm run build --workspace @durafoundry/domain",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@durafoundry/domain": "0.0.0",
+    "@temporalio/workflow": "^1.13.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0"
+  }
+}

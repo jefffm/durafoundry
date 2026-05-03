@@ -1,0 +1,111 @@
+import {
+  condition,
+  defineQuery,
+  defineUpdate,
+  proxyActivities,
+  setHandler,
+} from '@temporalio/workflow';
+
+import type {
+  CancelNodeUpdateInput,
+  FactoryRunActivities,
+  FactoryRunInput,
+  FactoryRunState,
+  GateOverrideUpdateInput,
+  PlanApprovalUpdateInput,
+  PlanDecisionResult,
+} from './contracts.js';
+import type {
+  HumanGapRequest,
+  HumanGapResult,
+  StateRetryRequest,
+  StateRetryResult,
+  SkipDelayRequest,
+  SkipDelayResult,
+} from '@durafoundry/domain';
+import {
+  applyDraftPlan,
+  approvePlanState,
+  cancelNodeState,
+  createInitialFactoryRunState,
+  overrideGateState,
+  pauseRunState,
+  requestFollowupDagState,
+  requestPlanChangesState,
+  resumeRunState,
+  retryFromStateScaffold,
+  skipDelayScaffold,
+  rejectPlanState,
+} from './scaffold.js';
+
+const activities = proxyActivities<FactoryRunActivities>({
+  startToCloseTimeout: '1 minute',
+});
+
+export const getRunStateQuery = defineQuery<FactoryRunState>('getRunState');
+export const approvePlanUpdate = defineUpdate<PlanDecisionResult, [PlanApprovalUpdateInput]>(
+  'approvePlan',
+);
+export const rejectPlanUpdate = defineUpdate<PlanDecisionResult, [PlanApprovalUpdateInput]>(
+  'rejectPlan',
+);
+export const requestPlanChangesUpdate = defineUpdate<
+  PlanDecisionResult,
+  [PlanApprovalUpdateInput]
+>('requestPlanChanges');
+export const pauseRunUpdate = defineUpdate<FactoryRunState, [string]>('pauseRun');
+export const resumeRunUpdate = defineUpdate<FactoryRunState, [string]>('resumeRun');
+export const cancelNodeUpdate = defineUpdate<FactoryRunState, [CancelNodeUpdateInput]>(
+  'cancelNode',
+);
+export const overrideGateUpdate = defineUpdate<FactoryRunState, [GateOverrideUpdateInput]>(
+  'overrideGate',
+);
+export const retryFromStateUpdate = defineUpdate<StateRetryResult, [StateRetryRequest]>(
+  'retryFromState',
+);
+export const skipDelayUpdate = defineUpdate<SkipDelayResult, [SkipDelayRequest]>('skipDelay');
+export const requestFollowupDagUpdate = defineUpdate<HumanGapResult, [HumanGapRequest]>(
+  'requestFollowupDag',
+);
+
+export async function factoryRunWorkflow(input: FactoryRunInput): Promise<FactoryRunState> {
+  let terminal = false;
+  const state = createInitialFactoryRunState(input);
+
+  setHandler(getRunStateQuery, () => state);
+  setHandler(approvePlanUpdate, (approval) => {
+    const result = approvePlanState(state, approval);
+    terminal = result.accepted;
+    return result;
+  });
+  setHandler(rejectPlanUpdate, (approval) => {
+    const result = rejectPlanState(state, approval);
+    terminal = result.accepted;
+    return result;
+  });
+  setHandler(requestPlanChangesUpdate, (approval) => {
+    const result = requestPlanChangesState(state, approval);
+    terminal = result.accepted;
+    return result;
+  });
+  setHandler(pauseRunUpdate, (reason) => pauseRunState(state, reason));
+  setHandler(resumeRunUpdate, () => resumeRunState(state));
+  setHandler(cancelNodeUpdate, (request) => cancelNodeState(state, request));
+  setHandler(overrideGateUpdate, (request) => overrideGateState(state, request));
+  setHandler(retryFromStateUpdate, (request: StateRetryRequest): StateRetryResult =>
+    retryFromStateScaffold(request),
+  );
+  setHandler(skipDelayUpdate, (request: SkipDelayRequest): SkipDelayResult =>
+    skipDelayScaffold(request),
+  );
+  setHandler(requestFollowupDagUpdate, (request: HumanGapRequest): HumanGapResult =>
+    requestFollowupDagState(state, request),
+  );
+
+  state.status = 'planning';
+  applyDraftPlan(state, await activities.createDraftPlan(input));
+
+  await condition(() => terminal);
+  return state;
+}
