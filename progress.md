@@ -5,12 +5,41 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 1, Temporal Dependencies And Test Harness.
-- Next chunk: Temporal V0 Chunk 2, Real FactoryRunWorkflow End-To-End State Machine.
+- Last completed chunk: Temporal V0 Chunk 2, Real FactoryRunWorkflow End-To-End State Machine.
+- Next chunk: Temporal V0 Chunk 3, Activity Registration For Fixture Runtime.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 2: Real FactoryRunWorkflow End-To-End State Machine
+
+Status: complete.
+
+Acceptance evidence:
+
+- Extended `FactoryRunInput` with optional fixture runtime inputs: repo path, trunk branch, worktree root, and git author.
+- `factoryRunWorkflow` now keeps the draft plan in workflow memory, waits for an `approvePlan` Update, and then executes the approved DAG through Temporal Activity proxies.
+- Rejection and change-request Updates still end the workflow without DAG execution.
+- Missing runtime inputs now stop the workflow at `needs_human` instead of pretending DAG execution happened.
+- Runtime trunk branch must match the approved plan's merge policy trunk branch before DAG execution starts.
+- The Temporal Worker/Client test now supplies mocked DAG Activities, rejects a stale approval through a real Temporal Update, approves the current plan through a real Temporal Update, observes `executing_dag` through a Query, waits for completion, and queries final completed state.
+- Direct calls to `runFactoryRunScaffold` are no longer the Temporal integration test's main assertion path.
+
+Validation evidence:
+
+- `nix develop -c npm run typecheck --workspace @durafoundry/workflows` passed.
+- `nix develop -c npm test --workspace @durafoundry/workflows -- --test-name-pattern "factory|temporal|approval|dag"` passed.
+- `nix develop -c bash -lc 'npm run typecheck --workspaces --if-present && npm test --workspaces --if-present && npm audit && npm run ubs:diff'` passed before the final trunk-branch guard.
+- After the guard, `nix develop -c bash -lc 'npm run typecheck --workspace @durafoundry/workflows && npm test --workspace @durafoundry/workflows -- --test-name-pattern "factory|temporal|approval|dag"'` passed.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: `FactoryRunInput.runtime.trunkBranch` was accepted but DAG execution uses the approved plan's merge policy trunk branch.
+- Fix: `factoryRunWorkflow` now rejects mismatched runtime/plan trunk branches with `needs_human`.
+- Finding: the first Chunk 2 test only proved valid approval, not stale approval rejection through Temporal.
+- Fix: the Temporal integration test now sends a stale `approvePlan` Update, asserts rejection, and confirms the workflow remains in `waiting_for_plan_approval`.
 
 ### Temporal V0 Chunk 1: Temporal Dependencies And Test Harness
 

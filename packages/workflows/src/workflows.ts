@@ -11,6 +11,7 @@ import type {
   DagExecutionActivities,
   DagExecutionResult,
   DagExecutionWorkflowInput,
+  DraftPlanResult,
   FactoryRunActivities,
   FactoryRunInput,
   FactoryRunState,
@@ -88,23 +89,24 @@ export const approveFollowupDagUpdate = defineUpdate<PlanDecisionResult, [PlanAp
 );
 
 export async function factoryRunWorkflow(input: FactoryRunInput): Promise<FactoryRunState> {
-  let terminal = false;
+  let planDecisionMade = false;
+  let draftPlan: DraftPlanResult | undefined;
   const state = createInitialFactoryRunState(input);
 
   setHandler(getRunStateQuery, () => state);
   setHandler(approvePlanUpdate, (approval) => {
     const result = approvePlanState(state, approval);
-    terminal = result.accepted;
+    planDecisionMade = result.accepted;
     return result;
   });
   setHandler(rejectPlanUpdate, (approval) => {
     const result = rejectPlanState(state, approval);
-    terminal = result.accepted;
+    planDecisionMade = result.accepted;
     return result;
   });
   setHandler(requestPlanChangesUpdate, (approval) => {
     const result = requestPlanChangesState(state, approval);
-    terminal = result.accepted;
+    planDecisionMade = result.accepted;
     return result;
   });
   setHandler(pauseRunUpdate, (reason) => pauseRunState(state, reason));
@@ -125,10 +127,40 @@ export async function factoryRunWorkflow(input: FactoryRunInput): Promise<Factor
   );
 
   state.status = 'planning';
-  applyDraftPlan(state, await activities.createDraftPlan(input));
+  draftPlan = await activities.createDraftPlan(input);
+  applyDraftPlan(state, draftPlan);
 
-  await condition(() => terminal);
-  return state;
+  await condition(() => planDecisionMade);
+  if (!isExecutingDagState(state)) {
+    return state;
+  }
+  if (!input.runtime) {
+    state.status = 'needs_human';
+    state.latestFailureReason = 'Cannot execute DAG without fixture runtime inputs.';
+    return state;
+  }
+  if (draftPlan.plan.mergePolicy.trunkBranch !== input.runtime.trunkBranch) {
+    state.status = 'needs_human';
+    state.latestFailureReason = `Runtime trunk branch ${input.runtime.trunkBranch} does not match approved plan trunk branch ${draftPlan.plan.mergePolicy.trunkBranch}.`;
+    return state;
+  }
+
+  const dagResult = await executeDagScaffold(
+    state,
+    {
+      plan: draftPlan.plan,
+      repoPath: input.runtime.repoPath,
+      worktreeRoot: input.runtime.worktreeRoot,
+      artifactRoot: input.artifactRoot,
+      gitAuthor: input.runtime.gitAuthor,
+    },
+    dagActivities,
+  );
+  return dagResult.state;
+}
+
+function isExecutingDagState(state: FactoryRunState): boolean {
+  return state.status === 'executing_dag';
 }
 
 export async function nodeExecutionWorkflow(

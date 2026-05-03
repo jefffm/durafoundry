@@ -39,6 +39,14 @@ export interface FactoryRunInput {
   specUri: string;
   specSha256: string;
   artifactRoot: string;
+  runtime?: FactoryRunRuntimeInput;
+}
+
+export interface FactoryRunRuntimeInput {
+  repoPath: string;
+  trunkBranch: string;
+  worktreeRoot: string;
+  gitAuthor: GitAuthorRef;
 }
 
 export interface DraftPlanResult {
