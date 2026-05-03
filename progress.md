@@ -4,12 +4,41 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 8, CLI Demo Path.
-- Next chunk: Chunk 9, End-To-End Fixture Acceptance.
+- Last completed chunk: Chunk 9, End-To-End Fixture Acceptance.
+- Next chunk: Chunk 10, Spec Review And Hardening.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 9: End-To-End Fixture Acceptance
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added CLI-level v0 acceptance coverage for the full fixture run using a generated repository and local artifact root.
+- The E2E run covers plan approval, immutable snapshot refs, plan and snapshot artifact readability, DAG scheduling, real git worktrees, real git node commits, serial merge, cleanup, milestone broad review, and milestone broad judge.
+- The `fixture-alpha` node fails review on the first attempt, repairs on the same node, and then merges; `fixture-beta` also merges, proving at least two nodes merge serially.
+- The test asserts merge concurrency stays at 1, both cleanup results remove factory worktrees, artifact URIs for diffs and agent sessions are readable, and the fixture repo path is outside the DuraFoundry checkout.
+- A separate acceptance scenario exercises a human follow-up DAG request, durable pause, selected node cancellation, approval, and resume.
+- A CLI E2E scenario runs `durafoundry run --spec docs/SPEC.md --fixture-repo --artifact-root <tmp>` against a generated fixture repository and asserts completed JSON output.
+- Test logs identify artifact roots and fixture repo paths, for example `/tmp/durafoundry-e2e-QQQnfx/fixtures/e2e-repair/repo` and `/tmp/durafoundry-e2e-cli-x2qBCw/fixtures/run-43514ee0-3951-4185-b054-d92ac2878cd4/repo`.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/cli` passed.
+- `npm test --workspace @durafoundry/cli` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged E2E test and progress/plan diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the first E2E state setup built the SPEC URI with string concatenation.
+- Fix: the E2E test now uses `pathToFileURL(...).href`, matching the CLI fix from Chunk 8 and avoiding path encoding bugs.
 
 ### Chunk 8: CLI Demo Path
 
@@ -266,4 +295,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 9 from `docs/execution-plan-v0.md`: add end-to-end v0 acceptance tests for the full fixture run, including plan approval, snapshot hashing, DAG scheduling, repair, real git commits, serial merge, cleanup, milestone gates, human follow-up, artifact outputs, and CLI execution.
+Start Chunk 10 from `docs/execution-plan-v0.md`: review the implemented v0 against the SPEC and execution plan, fix any blocking bugs or gaps immediately, and leave a concise next-steps report for nonblocking work.
