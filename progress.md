@@ -4,12 +4,40 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 1, Real Git Activities.
-- Next chunk: Chunk 2, Fake Agent Activities.
+- Last completed chunk: Chunk 2, Fake Agent Activities.
+- Next chunk: Chunk 3, Temporal Workflow Scaffold.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 2: Fake Agent Activities
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added `@durafoundry/fake-agent-activities`.
+- `runFakePlanner` writes a valid proposed plan bundle with node markdown bodies, milestone markdown bodies, and a snapshot manifest for validation.
+- `runFakeCoder` edits fixture files and returns `NodeAttemptResult` attempt context including changed files, command result, test result, diff artifact URI, and fake session artifact URI.
+- `runFakeReviewer` and `runFakeJudge` support fail-first-attempt behavior and return node-local repair instructions; subsequent attempts pass.
+- `runFakeBroadReviewer` and `runFakeBroadJudge` can either pass or produce structured milestone/final `GapReport`s classified as follow-up graph work.
+- `runFakeGapPlanner` converts broad gap findings into a valid follow-up `PlanDAG` with parent DAG/snapshot references.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/fake-agent-activities` passed.
+- `npm test --workspace @durafoundry/fake-agent-activities` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged package diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: fake planner initially produced an `approved` plan, which would collapse the later workflow approval step.
+- Fix: fake planner now emits a `proposed` plan, with test coverage asserting the status.
 
 ### Chunk 1: Real Git Activities
 
@@ -62,4 +90,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 2 from `docs/execution-plan-v0.md`: implement fixture-backed fake planner, coder, reviewer, judge, broad reviewer, broad judge, and gap planner Activities.
+Start Chunk 3 from `docs/execution-plan-v0.md`: add the Temporal TypeScript workflow package and test harness with deterministic-safe workflow code and mocked Activities.
