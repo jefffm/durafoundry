@@ -4,12 +4,51 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 10, Spec Review And Hardening.
-- Next chunk: all planned v0 execution chunks complete; see `docs/v0-hardening-review.md` for next steps.
+- Active plan: `docs/execution-plan-temporal-v0.md`.
+- Last completed chunk: Temporal V0 Chunk 0, Nix Temporal Environment Baseline.
+- Next chunk: Temporal V0 Chunk 1, Temporal Dependencies And Test Harness.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 0: Nix Temporal Environment Baseline
+
+Status: complete.
+
+Acceptance evidence:
+
+- Confirmed `main` was clean before starting the Temporal V0 plan bookkeeping.
+- Added and pushed the pinned Nix development shell in commit `0b993df Add Nix Temporal development shell`.
+- `flake.nix` defines the canonical dev shell with Node.js, npm, `just`, `temporal`, `jq`, `git`, and `rg`.
+- `.envrc` uses the flake.
+- `Justfile` includes `validate`, `smoke-temporal-cli`, and `temporal-dev`.
+- `just smoke-temporal-cli` starts an isolated local Temporal dev server, waits for health, probes `temporal workflow list`, and shuts it down.
+- `README.md` documents entering the shell and using the Temporal recipes.
+- Confirmed the current CLI still runs the deterministic scaffold directly.
+- Confirmed the current Temporal runtime gaps:
+  - no Worker process
+  - no Client process
+  - CLI calls scaffold directly
+  - live Temporal execution is untested
+
+Validation evidence:
+
+- `nix flake check` passed.
+- `nix develop -c just smoke-temporal-cli` passed.
+- `nix develop -c just validate` passed.
+- `npm run typecheck --workspaces --if-present` passed inside `just validate`.
+- `npm test --workspaces --if-present` passed inside `just validate`.
+- `npm audit` passed with 0 vulnerabilities inside `just validate`.
+- `npm run ubs:diff` completed inside `just validate`.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: `progress.md` still pointed at the completed deterministic v0 plan, which would make the next `/goal` ambiguous.
+- Fix: `progress.md` now marks `docs/execution-plan-temporal-v0.md` active and points the next chunk at Temporal V0 Chunk 1.
+- Finding: `docs/execution-plan-temporal-v0.md` still marked Chunk 0 as next even though the Nix/Temporal baseline was already implemented and validated.
+- Fix: the Temporal plan status now marks Chunk 0 complete and Chunk 1 next.
 
 ### Chunk 10: Spec Review And Hardening
 
