@@ -4,12 +4,42 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 6, DAG Scheduler And Merge Queue.
-- Next chunk: Chunk 7, Human Follow-Up DAG Control.
+- Last completed chunk: Chunk 7, Human Follow-Up DAG Control.
+- Next chunk: Chunk 8, CLI Demo Path.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 7: Human Follow-Up DAG Control
+
+Status: complete.
+
+Acceptance evidence:
+
+- `requestFollowupDagState` accepts `HumanGapRequest`, durably pauses scheduling, records the requested gap, and preserves the prior status for resume.
+- Follow-up control now cancels only explicitly selected unmerged nodes and skips only explicitly selected unstarted nodes.
+- Merged node summaries are left untouched and frozen when selected for cancellation.
+- Follow-up DAG drafts are validated as plan/snapshot artifacts, must reference the active parent DAG and parent snapshot, and are stored as bounded refs in `state.followupDag`.
+- Approval policy supports `always`, `high-risk-only`, `never`, and explicit human override; high-risk follow-up nodes require approval under `high-risk-only`.
+- Added `approveFollowupDagState` and `approveFollowupDagUpdate` for stale-safe follow-up DAG approval.
+- `resumeRunState` returns paused execution to its previous durable status, allowing approved follow-up control to resume legal original scheduling.
+- Tests cover pause-only, pause plus selective cancel/skip, follow-up DAG approval, high-risk approval requirement, resume, stale approval rejection, and preservation of unselected active/ready nodes.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/workflows` passed.
+- `npm test --workspace @durafoundry/workflows -- --test-name-pattern "followup|gap|pause|resume|cancel"` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged workflow and progress diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: follow-up control could easily overreach by mutating unselected nodes or completed work.
+- Fix: tests now assert unselected active/ready nodes remain unchanged and merged nodes remain immutable even if included in a cancellation request.
 
 ### Chunk 6: DAG Scheduler And Merge Queue
 
@@ -207,4 +237,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 7 from `docs/execution-plan-v0.md`: implement human follow-up DAG control for pause, selective cancel/skip, generated follow-up DAG approval, and resume behavior.
+Start Chunk 8 from `docs/execution-plan-v0.md`: ship the CLI/demo path for running DuraFoundry against `docs/SPEC.md` with a generated fixture repo and local artifacts.

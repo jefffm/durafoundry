@@ -9,6 +9,7 @@ import type {
   FactoryRunActivities,
   FactoryRunInput,
   FactoryRunState,
+  FollowupDagDraftResult,
   GateOverrideUpdateInput,
   NodeAttemptRecord,
   NodeExecutionActivities,
@@ -474,6 +475,7 @@ export function requestPlanChangesState(
 
 export function pauseRunState(state: FactoryRunState, reason: string): FactoryRunState {
   state.paused = true;
+  state.statusBeforePause = state.paused ? state.statusBeforePause : state.status;
   state.status = 'paused';
   state.latestFailureReason = reason;
   return state;
@@ -482,8 +484,11 @@ export function pauseRunState(state: FactoryRunState, reason: string): FactoryRu
 export function resumeRunState(state: FactoryRunState): FactoryRunState {
   state.paused = false;
   if (state.status === 'paused') {
-    state.status = state.plan ? 'waiting_for_plan_approval' : 'planning';
+    state.status =
+      state.statusBeforePause ??
+      (state.approvedSnapshot ? 'executing_dag' : state.plan ? 'waiting_for_plan_approval' : 'planning');
   }
+  state.statusBeforePause = undefined;
   return state;
 }
 
@@ -524,18 +529,57 @@ export function skipDelayScaffold(request: SkipDelayRequest): SkipDelayResult {
 export function requestFollowupDagState(
   state: FactoryRunState,
   request: HumanGapRequest,
+  draft?: FollowupDagDraftResult,
 ): HumanGapResult {
   state.requestedFollowup = request;
+  const cancelledNodeIds = cancelSelectedUnmergedNodes(state, request.cancelNodeIds ?? [], request.reason);
+  const skippedNodeIds = skipSelectedUnstartedNodes(
+    state,
+    request.markUnstartedNodeIdsSkipped ?? [],
+    request.reason,
+  );
   if (request.pauseScheduling) {
+    state.statusBeforePause = state.paused ? state.statusBeforePause : state.status;
     state.paused = true;
     state.status = 'paused';
+  }
+  if (draft) {
+    return applyFollowupDagDraftState(state, request, draft, cancelledNodeIds, skippedNodeIds);
   }
   return {
     accepted: true,
     runPaused: state.paused,
-    cancelledNodeIds: request.cancelNodeIds ?? [],
+    cancelledNodeIds,
     gapReportId: request.gapReport.gapReportId,
-    pendingApproval: true,
+    pendingApproval: false,
+  };
+}
+
+export function approveFollowupDagState(
+  state: FactoryRunState,
+  approval: PlanApprovalUpdateInput,
+): PlanDecisionResult {
+  if (!state.followupDag) {
+    return rejectDecision(state, 'No follow-up DAG is waiting for approval.');
+  }
+  if (state.followupDag.status !== 'waiting_for_approval') {
+    return rejectDecision(state, `Follow-up DAG is not waiting for approval: ${state.followupDag.status}`);
+  }
+  if (
+    approval.planId !== state.followupDag.planId ||
+    approval.artifactUri !== state.followupDag.artifactUri ||
+    approval.artifactSha256 !== state.followupDag.artifactSha256
+  ) {
+    return rejectDecision(state, 'Approval does not match the current follow-up DAG artifact.');
+  }
+
+  state.followupDag = {
+    ...state.followupDag,
+    status: 'approved',
+  };
+  return {
+    accepted: true,
+    status: state.status,
   };
 }
 
@@ -562,6 +606,114 @@ function validateDraftPlanResult(draft: DraftPlanResult): void {
   if (draft.snapshotManifest.planJson.uri !== draft.planRef.uri) {
     throw new Error('Draft plan snapshot does not reference the draft plan artifact.');
   }
+}
+
+function cancelSelectedUnmergedNodes(
+  state: FactoryRunState,
+  nodeIds: NodeId[],
+  reason: string,
+): NodeId[] {
+  const cancelledNodeIds: NodeId[] = [];
+  for (const nodeId of nodeIds) {
+    const current = state.nodes[nodeId];
+    if (!current || current.status === 'merged') {
+      continue;
+    }
+    state.nodes[nodeId] = {
+      nodeId,
+      status: 'cancelled',
+      failureReason: reason,
+    };
+    cancelledNodeIds.push(nodeId);
+  }
+  return cancelledNodeIds;
+}
+
+function skipSelectedUnstartedNodes(
+  state: FactoryRunState,
+  nodeIds: NodeId[],
+  reason: string,
+): NodeId[] {
+  const skippedNodeIds: NodeId[] = [];
+  for (const nodeId of nodeIds) {
+    const current = state.nodes[nodeId];
+    if (!current || (current.status !== 'ready' && current.status !== 'blocked')) {
+      continue;
+    }
+    state.nodes[nodeId] = {
+      nodeId,
+      status: 'skipped',
+      failureReason: reason,
+    };
+    skippedNodeIds.push(nodeId);
+  }
+  return skippedNodeIds;
+}
+
+function applyFollowupDagDraftState(
+  state: FactoryRunState,
+  request: HumanGapRequest,
+  draft: FollowupDagDraftResult,
+  cancelledNodeIds: NodeId[],
+  skippedNodeIds: NodeId[],
+): HumanGapResult {
+  validateDraftPlanResult(draft);
+  const parentDagId = state.approvedSnapshot?.dagId;
+  const parentSnapshotId = state.approvedSnapshot?.snapshotId;
+  if (!parentDagId || !parentSnapshotId) {
+    state.latestFailureReason = 'Cannot attach a follow-up DAG without an approved parent snapshot.';
+    return {
+      accepted: false,
+      runPaused: state.paused,
+      cancelledNodeIds,
+      gapReportId: request.gapReport.gapReportId,
+      rejectedReason: state.latestFailureReason,
+    };
+  }
+  if (draft.plan.parentDagId !== parentDagId || draft.plan.parentSnapshotId !== parentSnapshotId) {
+    state.latestFailureReason = 'Follow-up DAG does not reference the active parent DAG and snapshot.';
+    return {
+      accepted: false,
+      runPaused: state.paused,
+      cancelledNodeIds,
+      gapReportId: request.gapReport.gapReportId,
+      rejectedReason: state.latestFailureReason,
+    };
+  }
+
+  const highRiskNodeIds = draft.plan.nodes.filter(isHighRiskNode).map((node) => node.id);
+  const requiresApproval =
+    Boolean(request.requiresApprovalOverride) ||
+    draft.approvalPolicy === 'always' ||
+    (draft.approvalPolicy === 'high-risk-only' && highRiskNodeIds.length > 0);
+
+  state.followupDag = {
+    requestId: request.requestId,
+    gapReportId: request.gapReport.gapReportId,
+    planId: draft.plan.planId,
+    dagId: draft.plan.dagId,
+    parentDagId,
+    parentSnapshotId,
+    snapshotId: draft.snapshotManifest.snapshotId,
+    artifactUri: draft.planRef.uri,
+    artifactSha256: draft.planRef.sha256,
+    manifestUri: draft.snapshotManifestRef.uri,
+    manifestSha256: draft.snapshotManifestRef.sha256,
+    status: requiresApproval ? 'waiting_for_approval' : 'approved',
+    requiresApproval,
+    highRiskNodeIds,
+    cancelledNodeIds,
+    skippedNodeIds,
+  };
+
+  return {
+    accepted: true,
+    runPaused: state.paused,
+    cancelledNodeIds,
+    gapReportId: request.gapReport.gapReportId,
+    followupDagId: draft.plan.dagId,
+    pendingApproval: requiresApproval,
+  };
 }
 
 function hasUnfinishedNodes(plan: PlanDAG, state: FactoryRunState): boolean {

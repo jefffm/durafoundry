@@ -91,7 +91,9 @@ export interface FactoryRunState {
   nodeRuns?: Record<NodeId, NodeExecutionResult>;
   latestFailureReason?: string;
   paused: boolean;
+  statusBeforePause?: FactoryRunStatus;
   requestedFollowup?: HumanGapRequest;
+  followupDag?: FollowupDagState;
 }
 
 export interface NodeStateSummary {
@@ -132,6 +134,29 @@ export interface CancelNodeUpdateInput {
 export interface GateOverrideUpdateInput {
   targetId: string;
   reason: string;
+}
+
+export interface FollowupDagDraftResult extends DraftPlanResult {
+  approvalPolicy: 'always' | 'high-risk-only' | 'never';
+}
+
+export interface FollowupDagState {
+  requestId: string;
+  gapReportId: string;
+  planId: string;
+  dagId: string;
+  parentDagId: string;
+  parentSnapshotId: string;
+  snapshotId: string;
+  artifactUri: string;
+  artifactSha256?: string;
+  manifestUri: string;
+  manifestSha256?: string;
+  status: 'waiting_for_approval' | 'approved' | 'executing' | 'completed';
+  requiresApproval: boolean;
+  highRiskNodeIds: NodeId[];
+  cancelledNodeIds: NodeId[];
+  skippedNodeIds: NodeId[];
 }
 
 export interface ExecuteNodeRequest {

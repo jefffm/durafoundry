@@ -31,6 +31,7 @@ import type {
 } from '@durafoundry/domain';
 import {
   applyDraftPlan,
+  approveFollowupDagState,
   approvePlanState,
   cancelNodeState,
   createInitialFactoryRunState,
@@ -82,6 +83,9 @@ export const skipDelayUpdate = defineUpdate<SkipDelayResult, [SkipDelayRequest]>
 export const requestFollowupDagUpdate = defineUpdate<HumanGapResult, [HumanGapRequest]>(
   'requestFollowupDag',
 );
+export const approveFollowupDagUpdate = defineUpdate<PlanDecisionResult, [PlanApprovalUpdateInput]>(
+  'approveFollowupDag',
+);
 
 export async function factoryRunWorkflow(input: FactoryRunInput): Promise<FactoryRunState> {
   let terminal = false;
@@ -115,6 +119,9 @@ export async function factoryRunWorkflow(input: FactoryRunInput): Promise<Factor
   );
   setHandler(requestFollowupDagUpdate, (request: HumanGapRequest): HumanGapResult =>
     requestFollowupDagState(state, request),
+  );
+  setHandler(approveFollowupDagUpdate, (approval: PlanApprovalUpdateInput): PlanDecisionResult =>
+    approveFollowupDagState(state, approval),
   );
 
   state.status = 'planning';
