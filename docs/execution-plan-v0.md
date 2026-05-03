@@ -5,8 +5,8 @@ Each chunk should produce one reviewable commit unless the chunk explicitly says
 
 ## Execution Status
 
-- Last completed chunk: Chunk 7, Human Follow-Up DAG Control.
-- Next chunk: Chunk 8, CLI Demo Path.
+- Last completed chunk: Chunk 8, CLI Demo Path.
+- Next chunk: Chunk 9, End-To-End Fixture Acceptance.
 - Progress log: `progress.md`.
 
 ## Operating Rules

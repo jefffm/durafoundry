@@ -4,12 +4,41 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 7, Human Follow-Up DAG Control.
-- Next chunk: Chunk 8, CLI Demo Path.
+- Last completed chunk: Chunk 8, CLI Demo Path.
+- Next chunk: Chunk 9, End-To-End Fixture Acceptance.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 8: CLI Demo Path
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added `@durafoundry/cli` with `durafoundry` bin metadata and the command shape `durafoundry run --spec docs/SPEC.md --fixture-repo --artifact-root .durafoundry`.
+- The CLI requires `--fixture-repo`, creates a generated disposable fixture repository under the artifact root, and does not target the DuraFoundry implementation checkout.
+- The CLI reads the SPEC, writes a fake planner plan/snapshot bundle, auto-approves the plan for the demo path, runs the deterministic DAG scaffold with fake agents and real git worktree/commit/merge/cleanup Activities, and waits for completion.
+- The CLI prints one machine-readable JSON object containing run id, workflow id, artifact root, fixture repo path, plan id, DAG id, snapshot id, node commit SHAs, merge commit SHAs, and final status.
+- The CLI exits nonzero for failure or `needs_human` terminal states unless `--allow-needs-human` is passed.
+- README documents the demo command and the safety boundary that v0 only runs against generated fixture repositories.
+- CLI smoke test executes the built CLI with a temp artifact root, asserts JSON output shape, asserts final status is `completed`, and asserts the fixture repo path is outside the DuraFoundry checkout.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/cli` passed.
+- `npm test --workspace @durafoundry/cli` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged CLI, README, package metadata, and progress diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the first CLI implementation built the SPEC URI with string concatenation.
+- Fix: SPEC artifact metadata now uses `pathToFileURL(specPath).href`, which handles absolute paths safely.
 
 ### Chunk 7: Human Follow-Up DAG Control
 
@@ -237,4 +266,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 8 from `docs/execution-plan-v0.md`: ship the CLI/demo path for running DuraFoundry against `docs/SPEC.md` with a generated fixture repo and local artifacts.
+Start Chunk 9 from `docs/execution-plan-v0.md`: add end-to-end v0 acceptance tests for the full fixture run, including plan approval, snapshot hashing, DAG scheduling, repair, real git commits, serial merge, cleanup, milestone gates, human follow-up, artifact outputs, and CLI execution.

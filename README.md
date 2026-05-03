@@ -12,9 +12,25 @@ DuraFoundry turns approved software specifications into structured execution DAG
 
 ## Packages
 
+- `apps/cli`: v0 local demo CLI. It runs against a generated disposable fixture
+  repository and local artifact root, not this implementation checkout.
 - `packages/flue-runtime`: reusable Flue runtime helpers for DuraFoundry agent
   Activities, including userland OpenAI Codex OAuth resolution and Flue
   `init({ providers })` wiring for `openai-codex`.
+
+## CLI Demo
+
+Run the v0 fixture demo from this repository:
+
+```bash
+npm run build --workspace @durafoundry/cli
+node apps/cli/dist/index.js run --spec docs/SPEC.md --fixture-repo --artifact-root .durafoundry
+```
+
+The CLI prints one JSON object with the run id, workflow id, artifact root,
+generated fixture repository path, node commit SHAs, merge commit SHAs, and
+final status. The `--fixture-repo` flag is required in v0 so the demo creates a
+throwaway target under the artifact root instead of mutating this checkout.
 
 ## Quality Checks
 
