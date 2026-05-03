@@ -1,6 +1,10 @@
 import type {
   CancelNodeUpdateInput,
+  CleanupNodeWorktreeResult,
+  DagExecutionActivities,
+  DagExecutionResult,
   DraftPlanResult,
+  ExecuteDagRequest,
   ExecuteNodeRequest,
   FactoryRunActivities,
   FactoryRunInput,
@@ -9,14 +13,20 @@ import type {
   NodeAttemptRecord,
   NodeExecutionActivities,
   NodeExecutionResult,
+  MergeNodeCommitResult,
+  MergedNodeResult,
+  MilestoneGateResult,
   PlanApprovalUpdateInput,
   PlanDecisionResult,
 } from './contracts.js';
 import type {
   HumanGapRequest,
   HumanGapResult,
+  NodeId,
   NodeExecutionState,
+  PlanDAG,
   RepairInstruction,
+  TaskNode,
   StateRetryRequest,
   StateRetryResult,
   SkipDelayRequest,
@@ -296,6 +306,116 @@ export async function executeNodeScaffold(
   return result;
 }
 
+export async function executeDagScaffold(
+  state: FactoryRunState,
+  request: ExecuteDagRequest,
+  activities: DagExecutionActivities,
+): Promise<DagExecutionResult> {
+  if (!state.approvedSnapshot) {
+    state.status = 'needs_human';
+    state.latestFailureReason = 'Cannot execute DAG before plan snapshot approval.';
+  }
+
+  const nodeResults: Record<NodeId, NodeExecutionResult> = {};
+  const mergedNodes: MergedNodeResult[] = [];
+  const cleanupResults: CleanupNodeWorktreeResult[] = [];
+  const milestoneResults: MilestoneGateResult[] = [];
+  const completedMilestones = new Set<string>();
+  let maxObservedActiveNodes = 0;
+  let maxObservedActiveHighRiskNodes = 0;
+  let maxObservedMergeConcurrency = 0;
+  let activeMerges = 0;
+
+  while (state.approvedSnapshot && hasUnfinishedNodes(request.plan, state)) {
+    const readyNodes = selectReadyNodes(request.plan, state);
+    if (readyNodes.length === 0) {
+      state.status = 'needs_human';
+      state.latestFailureReason = 'DAG has unfinished nodes but no schedulable ready nodes.';
+      break;
+    }
+
+    const scheduledNodes = applyParallelismLimits(request.plan, readyNodes);
+    maxObservedActiveNodes = Math.max(maxObservedActiveNodes, scheduledNodes.length);
+    maxObservedActiveHighRiskNodes = Math.max(
+      maxObservedActiveHighRiskNodes,
+      scheduledNodes.filter(isHighRiskNode).length,
+    );
+
+    const nodeBatchResults = await Promise.all(
+      scheduledNodes.map((node) =>
+        executeNodeScaffold(
+          state,
+          nodeExecutionRequestForDagNode(request, node, dependenciesForNode(request.plan, node.id)),
+          activities,
+        ),
+      ),
+    );
+
+    for (const result of nodeBatchResults) {
+      nodeResults[result.state.nodeId] = result;
+      if (result.state.status !== 'ready_to_merge') {
+        if (result.state.worktreePath && result.state.branchName) {
+          const cleanup = await activities.cleanupNodeWorktree({
+            repoPath: request.repoPath,
+            worktreePath: result.state.worktreePath,
+            runId: state.runId,
+            nodeId: result.state.nodeId,
+            branchName: result.state.branchName,
+          });
+          cleanupResults.push(cleanup);
+        }
+        state.status = 'needs_human';
+        state.latestFailureReason = result.state.failureReason ?? `Node ${result.state.nodeId} did not merge.`;
+        return {
+          state,
+          nodeResults,
+          mergedNodes,
+          cleanupResults,
+          milestoneResults,
+          maxObservedActiveNodes,
+          maxObservedActiveHighRiskNodes,
+          maxObservedMergeConcurrency,
+        };
+      }
+    }
+
+    for (const result of nodeBatchResults) {
+      activeMerges += 1;
+      maxObservedMergeConcurrency = Math.max(maxObservedMergeConcurrency, activeMerges);
+      const merge = await mergeReadyNode(state, request, activities, result);
+      activeMerges -= 1;
+      mergedNodes.push(merge);
+      if (merge.cleanup) {
+        cleanupResults.push(merge.cleanup);
+      }
+    }
+
+    milestoneResults.push(
+      ...(await runCompletedMilestoneGates(
+        request,
+        state,
+        activities,
+        completedMilestones,
+      )),
+    );
+  }
+
+  if (state.status !== 'needs_human') {
+    state.status = 'completed';
+  }
+
+  return {
+    state,
+    nodeResults,
+    mergedNodes,
+    cleanupResults,
+    milestoneResults,
+    maxObservedActiveNodes,
+    maxObservedActiveHighRiskNodes,
+    maxObservedMergeConcurrency,
+  };
+}
+
 export function approvePlanState(
   state: FactoryRunState,
   approval: PlanApprovalUpdateInput,
@@ -442,6 +562,167 @@ function validateDraftPlanResult(draft: DraftPlanResult): void {
   if (draft.snapshotManifest.planJson.uri !== draft.planRef.uri) {
     throw new Error('Draft plan snapshot does not reference the draft plan artifact.');
   }
+}
+
+function hasUnfinishedNodes(plan: PlanDAG, state: FactoryRunState): boolean {
+  return plan.nodes.some((node) => state.nodes[node.id]?.status !== 'merged');
+}
+
+function selectReadyNodes(plan: PlanDAG, state: FactoryRunState): TaskNode[] {
+  const activeMilestone = plan.milestones.find((milestone) =>
+    milestone.nodeIds.some((nodeId) => state.nodes[nodeId]?.status !== 'merged'),
+  );
+  if (!activeMilestone) {
+    return [];
+  }
+  const activeMilestoneNodeIds = new Set(activeMilestone.nodeIds);
+
+  return plan.nodes.filter((node) => {
+    if (!activeMilestoneNodeIds.has(node.id)) {
+      return false;
+    }
+    const currentStatus = state.nodes[node.id]?.status ?? 'ready';
+    if (currentStatus !== 'ready' && currentStatus !== 'blocked') {
+      return false;
+    }
+    return dependenciesForNode(plan, node.id).every(
+      (dependencyId) => state.nodes[dependencyId]?.status === 'merged',
+    );
+  });
+}
+
+function dependenciesForNode(plan: PlanDAG, nodeId: NodeId): NodeId[] {
+  return plan.edges.filter((edge) => edge.to === nodeId).map((edge) => edge.from);
+}
+
+function applyParallelismLimits(plan: PlanDAG, readyNodes: TaskNode[]): TaskNode[] {
+  const selected: TaskNode[] = [];
+  let selectedHighRisk = 0;
+  for (const node of readyNodes) {
+    if (selected.length >= plan.parallelism.maxActiveNodes) {
+      break;
+    }
+    if (isHighRiskNode(node)) {
+      if (selectedHighRisk >= plan.parallelism.maxActiveHighRiskNodes) {
+        continue;
+      }
+      selectedHighRisk += 1;
+    }
+    selected.push(node);
+  }
+  return selected;
+}
+
+function isHighRiskNode(node: TaskNode): boolean {
+  return node.riskLevel === 'high' || node.riskLevel === 'critical';
+}
+
+function nodeExecutionRequestForDagNode(
+  request: ExecuteDagRequest,
+  node: TaskNode,
+  dependencyIds: NodeId[],
+): ExecuteNodeRequest {
+  return {
+    node,
+    dependencyIds,
+    repoPath: request.repoPath,
+    trunkBranch: request.plan.mergePolicy.trunkBranch,
+    worktreeRoot: request.worktreeRoot,
+    artifactRoot: request.artifactRoot,
+    gitAuthor: request.gitAuthor,
+  };
+}
+
+async function mergeReadyNode(
+  state: FactoryRunState,
+  request: ExecuteDagRequest,
+  activities: DagExecutionActivities,
+  result: NodeExecutionResult,
+): Promise<MergedNodeResult> {
+  const finalCommitSha = result.history.finalGatedCommitSha;
+  if (!result.state.branchName || !result.state.worktreePath || !finalCommitSha) {
+    throw new Error(`Node ${result.state.nodeId} is missing merge inputs.`);
+  }
+
+  const merge: MergeNodeCommitResult = await activities.mergeNodeCommit({
+    repoPath: request.repoPath,
+    trunkBranch: request.plan.mergePolicy.trunkBranch,
+    branchName: result.state.branchName,
+    author: request.gitAuthor,
+    expectedCommitSha: finalCommitSha,
+  });
+
+  result.state.status = 'merged';
+  result.state.mergedCommitSha = merge.trunkHeadAfter;
+  state.nodeRuns = {
+    ...(state.nodeRuns ?? {}),
+    [result.state.nodeId]: Object.freeze(result),
+  };
+  state.nodes[result.state.nodeId] = Object.freeze({
+    nodeId: result.state.nodeId,
+    status: 'merged',
+  });
+
+  const cleanup = await activities.cleanupNodeWorktree({
+    repoPath: request.repoPath,
+    worktreePath: result.state.worktreePath,
+    runId: state.runId,
+    nodeId: result.state.nodeId,
+    branchName: result.state.branchName,
+  });
+
+  return {
+    nodeId: result.state.nodeId,
+    merge,
+    cleanup,
+  };
+}
+
+async function runCompletedMilestoneGates(
+  request: ExecuteDagRequest,
+  state: FactoryRunState,
+  activities: DagExecutionActivities,
+  completedMilestones: Set<string>,
+): Promise<MilestoneGateResult[]> {
+  const results: MilestoneGateResult[] = [];
+  for (const milestone of request.plan.milestones) {
+    if (completedMilestones.has(milestone.id)) {
+      continue;
+    }
+    if (!milestone.nodeIds.every((nodeId) => state.nodes[nodeId]?.status === 'merged')) {
+      continue;
+    }
+
+    const result: MilestoneGateResult = {
+      milestoneId: milestone.id,
+      gapReports: [],
+    };
+    if (milestone.reviewPolicy.runBroadReview) {
+      const broadReview = await activities.runBroadReviewer({
+        milestoneId: milestone.id,
+        mergedNodeIds: milestone.nodeIds,
+        repoPath: request.repoPath,
+      });
+      result.review = broadReview.report;
+      if (broadReview.gapReport) {
+        result.gapReports.push(broadReview.gapReport);
+      }
+    }
+    if (milestone.reviewPolicy.runBroadJudge) {
+      const broadJudge = await activities.runBroadJudge({
+        milestoneId: milestone.id,
+        mergedNodeIds: milestone.nodeIds,
+        repoPath: request.repoPath,
+      });
+      result.judge = broadJudge.report;
+      if (broadJudge.gapReport) {
+        result.gapReports.push(broadJudge.gapReport);
+      }
+    }
+    completedMilestones.add(milestone.id);
+    results.push(result);
+  }
+  return results;
 }
 
 function createInitialNodeExecutionState(

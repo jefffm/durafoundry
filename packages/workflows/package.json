@@ -13,9 +13,9 @@
     "dist"
   ],
   "scripts": {
-    "pretypecheck": "npm run build --workspace @durafoundry/domain",
+    "pretypecheck": "npm run build --workspace @durafoundry/domain && npm run build --workspace @durafoundry/fixture-repo && npm run build --workspace @durafoundry/git-activities && npm run build --workspace @durafoundry/fake-agent-activities",
     "typecheck": "tsc --noEmit",
-    "prebuild": "npm run build --workspace @durafoundry/domain",
+    "prebuild": "npm run build --workspace @durafoundry/domain && npm run build --workspace @durafoundry/fixture-repo && npm run build --workspace @durafoundry/git-activities && npm run build --workspace @durafoundry/fake-agent-activities",
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/**/*.test.js\""
   },
@@ -24,6 +24,9 @@
     "@temporalio/workflow": "^1.13.2"
   },
   "devDependencies": {
+    "@durafoundry/fake-agent-activities": "0.0.0",
+    "@durafoundry/fixture-repo": "0.0.0",
+    "@durafoundry/git-activities": "0.0.0",
     "@types/node": "^20.19.0"
   }
 }

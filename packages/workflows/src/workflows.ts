@@ -8,6 +8,9 @@ import {
 
 import type {
   CancelNodeUpdateInput,
+  DagExecutionActivities,
+  DagExecutionResult,
+  DagExecutionWorkflowInput,
   FactoryRunActivities,
   FactoryRunInput,
   FactoryRunState,
@@ -31,6 +34,7 @@ import {
   approvePlanState,
   cancelNodeState,
   createInitialFactoryRunState,
+  executeDagScaffold,
   executeNodeScaffold,
   overrideGateState,
   pauseRunState,
@@ -46,6 +50,9 @@ const activities = proxyActivities<FactoryRunActivities>({
   startToCloseTimeout: '1 minute',
 });
 const nodeActivities = proxyActivities<NodeExecutionActivities>({
+  startToCloseTimeout: '5 minutes',
+});
+const dagActivities = proxyActivities<DagExecutionActivities>({
   startToCloseTimeout: '5 minutes',
 });
 
@@ -121,4 +128,10 @@ export async function nodeExecutionWorkflow(
   input: NodeExecutionWorkflowInput,
 ): Promise<NodeExecutionResult> {
   return executeNodeScaffold(input.factoryState, input.request, nodeActivities);
+}
+
+export async function dagExecutionWorkflow(
+  input: DagExecutionWorkflowInput,
+): Promise<DagExecutionResult> {
+  return executeDagScaffold(input.factoryState, input.request, dagActivities);
 }

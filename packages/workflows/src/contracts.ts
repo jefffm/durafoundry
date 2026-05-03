@@ -1,6 +1,7 @@
 import type {
   ArtifactRef,
   CommandResult,
+  GapReport,
   HumanGapRequest,
   HumanGapResult,
   JudgeReport,
@@ -59,6 +60,13 @@ export interface NodeExecutionActivities {
   commitNodeChanges(input: CommitNodeChangesActivityInput): Promise<NodeCommitResult>;
   runReviewer(input: RunGateActivityInput): Promise<NodeReviewGateResult>;
   runJudge(input: RunGateActivityInput): Promise<NodeJudgeGateResult>;
+}
+
+export interface DagExecutionActivities extends NodeExecutionActivities {
+  mergeNodeCommit(input: MergeNodeCommitActivityInput): Promise<MergeNodeCommitResult>;
+  cleanupNodeWorktree(input: CleanupNodeWorktreeActivityInput): Promise<CleanupNodeWorktreeResult>;
+  runBroadReviewer(input: RunBroadGateActivityInput): Promise<BroadReviewGateResult>;
+  runBroadJudge(input: RunBroadGateActivityInput): Promise<BroadJudgeGateResult>;
 }
 
 export interface FactoryRunState {
@@ -237,4 +245,93 @@ export interface NodeExecutionResult {
   history: NodeRunHistory;
   attempts: NodeAttemptRecord[];
   appendedGraphWork: false;
+}
+
+export interface ExecuteDagRequest {
+  plan: PlanDAG;
+  repoPath: string;
+  worktreeRoot: string;
+  artifactRoot: string;
+  gitAuthor: GitAuthorRef;
+}
+
+export interface DagExecutionWorkflowInput {
+  factoryState: FactoryRunState;
+  request: ExecuteDagRequest;
+}
+
+export interface MergeNodeCommitActivityInput {
+  repoPath: string;
+  trunkBranch: string;
+  branchName: string;
+  author: GitAuthorRef;
+  expectedCommitSha?: string;
+}
+
+export interface MergeNodeCommitResult {
+  repoPath: string;
+  trunkBranch: string;
+  branchName: string;
+  mergedCommitSha: string;
+  trunkHeadBefore: string;
+  trunkHeadAfter: string;
+  commandsRun: CommandResult[];
+}
+
+export interface CleanupNodeWorktreeActivityInput {
+  repoPath: string;
+  worktreePath: string;
+  runId: string;
+  nodeId?: NodeId;
+  branchName?: string;
+  removeBranch?: boolean;
+}
+
+export interface CleanupNodeWorktreeResult {
+  repoPath: string;
+  worktreePath: string;
+  branchName: string;
+  removedWorktree: boolean;
+  removedBranch: boolean;
+  commandsRun: CommandResult[];
+}
+
+export interface RunBroadGateActivityInput {
+  milestoneId: string;
+  mergedNodeIds: NodeId[];
+  repoPath: string;
+}
+
+export interface BroadReviewGateResult {
+  report: ReviewReport;
+  gapReport?: GapReport;
+}
+
+export interface BroadJudgeGateResult {
+  report: JudgeReport;
+  gapReport?: GapReport;
+}
+
+export interface MilestoneGateResult {
+  milestoneId: string;
+  review?: ReviewReport;
+  judge?: JudgeReport;
+  gapReports: GapReport[];
+}
+
+export interface MergedNodeResult {
+  nodeId: NodeId;
+  merge: MergeNodeCommitResult;
+  cleanup?: CleanupNodeWorktreeResult;
+}
+
+export interface DagExecutionResult {
+  state: FactoryRunState;
+  nodeResults: Record<NodeId, NodeExecutionResult>;
+  mergedNodes: MergedNodeResult[];
+  cleanupResults: CleanupNodeWorktreeResult[];
+  milestoneResults: MilestoneGateResult[];
+  maxObservedActiveNodes: number;
+  maxObservedActiveHighRiskNodes: number;
+  maxObservedMergeConcurrency: number;
 }

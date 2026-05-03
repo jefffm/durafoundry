@@ -5,8 +5,8 @@ Each chunk should produce one reviewable commit unless the chunk explicitly says
 
 ## Execution Status
 
-- Last completed chunk: Chunk 5, Node Execution Repair Loop.
-- Next chunk: Chunk 6, DAG Scheduler And Merge Queue.
+- Last completed chunk: Chunk 6, DAG Scheduler And Merge Queue.
+- Next chunk: Chunk 7, Human Follow-Up DAG Control.
 - Progress log: `progress.md`.
 
 ## Operating Rules

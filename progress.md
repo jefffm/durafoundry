@@ -4,12 +4,42 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 5, Node Execution Repair Loop.
-- Next chunk: Chunk 6, DAG Scheduler And Merge Queue.
+- Last completed chunk: Chunk 6, DAG Scheduler And Merge Queue.
+- Next chunk: Chunk 7, Human Follow-Up DAG Control.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 6: DAG Scheduler And Merge Queue
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added typed DAG execution contracts and a `dagExecutionWorkflow` entry point.
+- Added deterministic `executeDagScaffold` behavior that schedules ready nodes from the approved snapshot, respects dependency edges, enforces `maxActiveNodes`, enforces `maxActiveHighRiskNodes`, and schedules only the first unfinished milestone.
+- Ready-to-merge nodes enter a root-scoped serial merge loop; observed merge concurrency is recorded and remains 1.
+- Merged nodes are marked `merged` and their state summaries are frozen so later scheduler passes do not reschedule or mutate them.
+- Worktrees are cleaned after merge, and terminal node failures trigger durable cleanup when a worktree was created.
+- Milestone broad review and broad judge gates run after all nodes in a milestone have merged.
+- The real fixture integration test runs two independent fixture nodes, uses real git worktree/commit/merge/cleanup Activities, verifies serial merge order, and verifies fixture trunk contains both node changes.
+- Tests cover dependency blocking, high-risk throttling, total parallelism, milestone ordering, serial merge behavior, cleanup, and milestone gates.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/workflows` passed.
+- `npm test --workspace @durafoundry/workflows -- --test-name-pattern "dag|scheduler|merge|milestone"` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged workflow, package metadata, and progress diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the first scheduler pass respected dependencies and parallelism but could schedule nodes from later milestones when no explicit edge blocked them.
+- Fix: ready-node selection is now constrained to the first unfinished milestone, with regression coverage proving milestone 2 waits for milestone 1 to merge and run its gates.
 
 ### Chunk 5: Node Execution Repair Loop
 
@@ -177,4 +207,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 6 from `docs/execution-plan-v0.md`: implement DAG scheduling, dependency readiness, parallelism limits, milestone ordering, and the root-scoped serial merge queue.
+Start Chunk 7 from `docs/execution-plan-v0.md`: implement human follow-up DAG control for pause, selective cancel/skip, generated follow-up DAG approval, and resume behavior.
