@@ -3,6 +3,12 @@
 This plan is meant to be executed one chunk at a time with Codex `/goal`.
 Each chunk should produce one reviewable commit unless the chunk explicitly says it is a planning or validation-only pass.
 
+## Execution Status
+
+- Last completed chunk: Chunk 0, Baseline Recheck.
+- Next chunk: Chunk 1, Real Git Activities.
+- Progress log: `progress.md`.
+
 ## Operating Rules
 
 For each chunk:
