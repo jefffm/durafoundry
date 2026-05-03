@@ -5,8 +5,8 @@ Each chunk should produce one reviewable commit unless the chunk explicitly says
 
 ## Execution Status
 
-- Last completed chunk: Chunk 3, Temporal Workflow Scaffold.
-- Next chunk: Chunk 4, Plan Approval And Snapshot Execution.
+- Last completed chunk: Chunk 4, Plan Approval And Snapshot Execution.
+- Next chunk: Chunk 5, Node Execution Repair Loop.
 - Progress log: `progress.md`.
 
 ## Operating Rules

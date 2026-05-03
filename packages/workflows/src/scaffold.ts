@@ -16,6 +16,7 @@ import type {
   SkipDelayRequest,
   SkipDelayResult,
 } from '@durafoundry/domain';
+import { validatePlanDAG, validatePlanSnapshotManifest } from '@durafoundry/domain';
 
 export function createInitialFactoryRunState(input: FactoryRunInput): FactoryRunState {
   return {
@@ -30,6 +31,7 @@ export function createInitialFactoryRunState(input: FactoryRunInput): FactoryRun
 }
 
 export function applyDraftPlan(state: FactoryRunState, draft: DraftPlanResult): void {
+  validateDraftPlanResult(draft);
   state.plan = {
     planId: draft.plan.planId,
     dagId: draft.plan.dagId,
@@ -37,6 +39,9 @@ export function applyDraftPlan(state: FactoryRunState, draft: DraftPlanResult): 
     artifactSha256: draft.planRef.sha256,
     summary: draft.summary,
     status: draft.plan.status,
+    snapshotId: draft.snapshotManifest.snapshotId,
+    manifestUri: draft.snapshotManifestRef.uri,
+    manifestSha256: draft.snapshotManifestRef.sha256,
   };
   state.nodes = Object.fromEntries(
     draft.plan.nodes.map((node) => [
@@ -80,6 +85,17 @@ export function approvePlanState(
 
   state.status = 'plan_approved';
   state.plan.status = 'approved';
+  state.approvedSnapshot = Object.freeze({
+    snapshotId: state.plan.snapshotId,
+    planId: state.plan.planId,
+    dagId: state.plan.dagId,
+    planArtifactUri: state.plan.artifactUri,
+    planArtifactSha256: state.plan.artifactSha256,
+    manifestUri: state.plan.manifestUri,
+    manifestSha256: state.plan.manifestSha256,
+    approvedBy: approval.actor,
+  });
+  state.status = 'executing_dag';
   return { accepted: true, status: state.status };
 }
 
@@ -179,4 +195,20 @@ function rejectDecision(state: FactoryRunState, rejectedReason: string): PlanDec
     status: state.status,
     rejectedReason,
   };
+}
+
+function validateDraftPlanResult(draft: DraftPlanResult): void {
+  const planResult = validatePlanDAG(draft.plan);
+  if (!planResult.valid) {
+    throw new Error(`Draft plan validation failed: ${planResult.errors.join('; ')}`);
+  }
+
+  const snapshotResult = validatePlanSnapshotManifest(draft.plan, draft.snapshotManifest);
+  if (!snapshotResult.valid) {
+    throw new Error(`Draft plan snapshot validation failed: ${snapshotResult.errors.join('; ')}`);
+  }
+
+  if (draft.snapshotManifest.planJson.uri !== draft.planRef.uri) {
+    throw new Error('Draft plan snapshot does not reference the draft plan artifact.');
+  }
 }

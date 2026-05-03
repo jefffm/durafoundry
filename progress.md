@@ -4,12 +4,40 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 3, Temporal Workflow Scaffold.
-- Next chunk: Chunk 4, Plan Approval And Snapshot Execution.
+- Last completed chunk: Chunk 4, Plan Approval And Snapshot Execution.
+- Next chunk: Chunk 5, Node Execution Repair Loop.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 4: Plan Approval And Snapshot Execution
+
+Status: complete.
+
+Acceptance evidence:
+
+- Draft plan results are validated with `validatePlanDAG` and `validatePlanSnapshotManifest` before entering approval.
+- Workflow state stores bounded plan and snapshot refs: plan id, DAG id, artifact URI/hash, snapshot id, manifest URI/hash, and summary.
+- Plan approval rejects stale inputs when the plan id, artifact URI, or artifact hash no longer matches the current draft.
+- Approved plans create a frozen `approvedSnapshot` ref and transition the run to `executing_dag`.
+- Reject and request-changes updates remain explicit plan decisions.
+- Tests cover approval, rejection, change request, stale artifact rejection, stale plan-id rejection, invalid graph rejection, invalid snapshot manifest rejection, bounded snapshot refs, and approved snapshot immutability.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/workflows` passed.
+- `npm test --workspace @durafoundry/workflows -- --test-name-pattern "plan|snapshot|approval"` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged package and progress diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the first Chunk 4 test set covered stale artifact mismatches but did not explicitly cover stale plan-id mismatches, and snapshot immutability was implied by `Object.freeze` without a regression assertion.
+- Fix: added explicit stale plan-id, bad snapshot manifest, and frozen snapshot mutation assertions before completing the chunk.
 
 ### Chunk 3: Temporal Workflow Scaffold
 
@@ -118,4 +146,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 4 from `docs/execution-plan-v0.md`: implement plan iteration, approval, immutable snapshot creation, and stale approval rejection in the workflow slice.
+Start Chunk 5 from `docs/execution-plan-v0.md`: implement the one-node execution repair loop with fake coder, verification, reviewer, judge, same-node repair, and max-attempt escalation.
