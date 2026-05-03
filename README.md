@@ -8,6 +8,7 @@ DuraFoundry turns approved software specifications into structured execution DAG
 
 - [Specification](docs/SPEC.md)
 - [V0 execution plan](docs/execution-plan-v0.md)
+- [Temporal V0 execution plan](docs/execution-plan-temporal-v0.md)
 - [V0 hardening review](docs/v0-hardening-review.md)
 - [Flue/Codex integration spike](docs/spikes/flue-codex-integration.md)
 
@@ -32,6 +33,32 @@ The CLI prints one JSON object with the run id, workflow id, artifact root,
 generated fixture repository path, node commit SHAs, merge commit SHAs, and
 final status. The `--fixture-repo` flag is required in v0 so the demo creates a
 throwaway target under the artifact root instead of mutating this checkout.
+
+## Development Shell
+
+The canonical development environment is the pinned Nix flake:
+
+```bash
+nix develop
+just --list
+```
+
+The shell provides Node.js, npm, `just`, `temporal`, `jq`, `git`, and `rg`.
+Use `direnv allow` if you want `.envrc` to enter the shell automatically.
+
+Useful recipes:
+
+```bash
+just validate
+just smoke-temporal-cli
+just temporal-dev
+```
+
+`just smoke-temporal-cli` starts an isolated local Temporal dev server with
+`temporal server start-dev`, waits until it is healthy, probes the CLI, and
+then shuts the server down. `just temporal-dev` starts a long-running local
+Temporal dev server at `127.0.0.1:7233` with the UI at
+`http://127.0.0.1:8233`.
 
 ## Quality Checks
 
