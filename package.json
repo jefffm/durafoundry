@@ -21,5 +21,12 @@
     "@types/node": "^22.10.10",
     "typescript": "^5.9.2",
     "valibot": "^1.1.0"
+  },
+  "overrides": {
+    "@flue/sdk": {
+      "just-bash": {
+        "fast-xml-parser": "5.7.2"
+      }
+    }
   }
 }

@@ -16,5 +16,12 @@
     "@types/node": "^22.10.10",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "@flue/sdk": {
+      "just-bash": {
+        "fast-xml-parser": "5.7.2"
+      }
+    }
   }
 }
