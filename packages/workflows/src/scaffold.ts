@@ -1,16 +1,22 @@
 import type {
   CancelNodeUpdateInput,
   DraftPlanResult,
+  ExecuteNodeRequest,
   FactoryRunActivities,
   FactoryRunInput,
   FactoryRunState,
   GateOverrideUpdateInput,
+  NodeAttemptRecord,
+  NodeExecutionActivities,
+  NodeExecutionResult,
   PlanApprovalUpdateInput,
   PlanDecisionResult,
 } from './contracts.js';
 import type {
   HumanGapRequest,
   HumanGapResult,
+  NodeExecutionState,
+  RepairInstruction,
   StateRetryRequest,
   StateRetryResult,
   SkipDelayRequest,
@@ -63,6 +69,231 @@ export async function runFactoryRunScaffold(
   state.status = 'planning';
   applyDraftPlan(state, await activities.createDraftPlan(input));
   return state;
+}
+
+export async function executeNodeScaffold(
+  state: FactoryRunState,
+  request: ExecuteNodeRequest,
+  activities: NodeExecutionActivities,
+): Promise<NodeExecutionResult> {
+  const snapshotId = state.approvedSnapshot?.snapshotId;
+  if (!snapshotId) {
+    const blocked = createInitialNodeExecutionState(request, 'needs_human');
+    blocked.failureReason = 'Cannot execute node before a plan snapshot is approved.';
+    updateNodeSummary(state, blocked);
+    return toNodeExecutionResult(blocked, [], []);
+  }
+
+  const unsatisfiedDependencies = request.dependencyIds.filter(
+    (dependencyId) => state.nodes[dependencyId]?.status !== 'merged',
+  );
+  if (unsatisfiedDependencies.length > 0) {
+    const blocked = createInitialNodeExecutionState(request, 'blocked', snapshotId);
+    blocked.failureReason = `Unsatisfied dependencies: ${unsatisfiedDependencies.join(', ')}`;
+    updateNodeSummary(state, blocked);
+    return toNodeExecutionResult(blocked, [], []);
+  }
+
+  const worktree = await activities.createNodeWorktree({
+    repoPath: request.repoPath,
+    trunkBranch: request.trunkBranch,
+    worktreeRoot: request.worktreeRoot,
+    runId: state.runId,
+    nodeId: request.node.id,
+    baseRef: request.node.worktree.baseRef,
+  });
+
+  const executionState = createInitialNodeExecutionState(request, 'running', snapshotId);
+  executionState.worktreePath = worktree.worktreePath;
+  executionState.branchName = worktree.branchName;
+  updateNodeSummary(state, executionState);
+
+  const attempts: NodeAttemptRecord[] = [];
+  const allRepairInstructions: RepairInstruction[] = [];
+  let pendingRepairInstructions: RepairInstruction[] = [];
+
+  for (let attemptNumber = 1; attemptNumber <= request.node.maxAttempts; attemptNumber += 1) {
+    const attemptId = `${request.node.id}-attempt-${attemptNumber}`;
+    executionState.status = pendingRepairInstructions.length > 0 ? 'repairing' : 'running';
+    executionState.activeAttemptId = attemptId;
+    executionState.attemptIds.push(attemptId);
+    updateNodeSummary(state, executionState);
+
+    const attempt = await activities.runCoder({
+      repoPath: worktree.worktreePath,
+      nodeId: request.node.id,
+      attemptId,
+      planSnapshotId: snapshotId,
+      artifactRoot: request.artifactRoot,
+      repairInstructions: pendingRepairInstructions,
+    });
+
+    const verificationResults = [];
+    let failedVerification:
+      | Awaited<ReturnType<NodeExecutionActivities['runVerification']>>
+      | undefined;
+    const verificationCommands =
+      request.node.verificationCommands.length > 0
+        ? request.node.verificationCommands
+        : ['verification skipped'];
+    for (const command of verificationCommands) {
+      const verification = await activities.runVerification({
+        nodeId: request.node.id,
+        attemptId,
+        attemptNumber,
+        worktreePath: worktree.worktreePath,
+        command,
+        repairInstructions: pendingRepairInstructions,
+      });
+      verificationResults.push(verification.result);
+      if (verification.result.status !== 'passed') {
+        failedVerification = verification;
+        break;
+      }
+    }
+
+    const attemptRecord: NodeAttemptRecord = {
+      attempt: {
+        ...attempt,
+        testResults: mergeVerificationResults(attempt.testResults, verificationResults),
+      },
+      verification: verificationResults.at(-1) ?? {
+        command: 'verification skipped',
+        status: 'skipped',
+        summary: 'No verification commands were configured.',
+      },
+      repairInstructions: [],
+    };
+
+    if (failedVerification) {
+      attempts.push(attemptRecord);
+      const terminal = handleRepairableFailure({
+        state,
+        executionState,
+        attempts,
+        allRepairInstructions,
+        attemptRecord,
+        newRepairInstructions: failedVerification.repairInstructions,
+        failureReason: failedVerification.result.summary,
+        attemptsRemaining: attemptNumber < request.node.maxAttempts,
+      });
+      if (terminal) {
+        return terminal;
+      }
+      pendingRepairInstructions = failedVerification.repairInstructions;
+      continue;
+    }
+
+    const commit = await activities.commitNodeChanges({
+      worktreePath: worktree.worktreePath,
+      nodeId: request.node.id,
+      message: `DuraFoundry node ${request.node.id} attempt ${attemptNumber}`,
+      author: request.gitAuthor,
+      artifactRoot: request.artifactRoot,
+    });
+    attemptRecord.commit = commit;
+    attemptRecord.attempt = {
+      ...attemptRecord.attempt,
+      changedFiles: dedupe([...attemptRecord.attempt.changedFiles, ...commit.changedFiles]),
+      commandsRun: [...attemptRecord.attempt.commandsRun, ...commit.commandsRun],
+      diffUri: commit.diffUri ?? attemptRecord.attempt.diffUri,
+      checkpointCommits: dedupe([...attemptRecord.attempt.checkpointCommits, commit.commitSha]),
+      commitSha: commit.commitSha,
+    };
+    executionState.latestDiffUri = attemptRecord.attempt.diffUri;
+    executionState.checkpointCommits.push(commit.commitSha);
+
+    executionState.status = 'awaiting_review';
+    updateNodeSummary(state, executionState);
+    const review = await activities.runReviewer({
+      nodeId: request.node.id,
+      attemptNumber,
+      attemptId,
+      commitSha: commit.commitSha,
+      changedFiles: attemptRecord.attempt.changedFiles,
+      diffUri: attemptRecord.attempt.diffUri,
+      repairInstructions: pendingRepairInstructions,
+    });
+    attemptRecord.review = review.report;
+    executionState.latestReview = review.report;
+
+    if (review.report.status !== 'pass') {
+      attempts.push(attemptRecord);
+      const terminal = handleRepairableFailure({
+        state,
+        executionState,
+        attempts,
+        allRepairInstructions,
+        attemptRecord,
+        newRepairInstructions: review.repairInstructions,
+        failureReason: review.report.summary,
+        attemptsRemaining: attemptNumber < request.node.maxAttempts,
+      });
+      if (terminal) {
+        return terminal;
+      }
+      pendingRepairInstructions = review.repairInstructions;
+      continue;
+    }
+
+    executionState.status = 'awaiting_judgement';
+    updateNodeSummary(state, executionState);
+    const judgement = await activities.runJudge({
+      nodeId: request.node.id,
+      attemptNumber,
+      attemptId,
+      commitSha: commit.commitSha,
+      changedFiles: attemptRecord.attempt.changedFiles,
+      diffUri: attemptRecord.attempt.diffUri,
+      repairInstructions: pendingRepairInstructions,
+    });
+    attemptRecord.judge = judgement.report;
+    executionState.latestJudgement = judgement.report;
+
+    if (judgement.report.status !== 'pass') {
+      attempts.push(attemptRecord);
+      const terminal = handleRepairableFailure({
+        state,
+        executionState,
+        attempts,
+        allRepairInstructions,
+        attemptRecord,
+        newRepairInstructions: judgement.repairInstructions,
+        failureReason: judgement.report.summary,
+        attemptsRemaining: attemptNumber < request.node.maxAttempts,
+      });
+      if (terminal) {
+        return terminal;
+      }
+      pendingRepairInstructions = judgement.repairInstructions;
+      continue;
+    }
+
+    attempts.push(attemptRecord);
+    executionState.status = 'ready_to_merge';
+    executionState.activeAttemptId = undefined;
+    executionState.latestDiffUri = attemptRecord.attempt.diffUri;
+    executionState.checkpointCommits = dedupe(executionState.checkpointCommits);
+    executionState.failureReason = undefined;
+    const result = toNodeExecutionResult(executionState, attempts, allRepairInstructions);
+    state.nodeRuns = {
+      ...(state.nodeRuns ?? {}),
+      [request.node.id]: result,
+    };
+    updateNodeSummary(state, executionState);
+    return result;
+  }
+
+  executionState.status = 'needs_human';
+  executionState.activeAttemptId = undefined;
+  executionState.failureReason = `Node ${request.node.id} exhausted ${request.node.maxAttempts} attempts.`;
+  const result = toNodeExecutionResult(executionState, attempts, allRepairInstructions);
+  state.nodeRuns = {
+    ...(state.nodeRuns ?? {}),
+    [request.node.id]: result,
+  };
+  updateNodeSummary(state, executionState);
+  return result;
 }
 
 export function approvePlanState(
@@ -211,4 +442,115 @@ function validateDraftPlanResult(draft: DraftPlanResult): void {
   if (draft.snapshotManifest.planJson.uri !== draft.planRef.uri) {
     throw new Error('Draft plan snapshot does not reference the draft plan artifact.');
   }
+}
+
+function createInitialNodeExecutionState(
+  request: ExecuteNodeRequest,
+  status: NodeExecutionState['status'],
+  planSnapshotId = 'unapproved',
+): NodeExecutionState {
+  return {
+    nodeId: request.node.id,
+    planSnapshotId,
+    status,
+    dependencyIds: request.dependencyIds,
+    attemptIds: [],
+    checkpointCommits: [],
+  };
+}
+
+function updateNodeSummary(state: FactoryRunState, executionState: NodeExecutionState): void {
+  state.nodes[executionState.nodeId] = {
+    nodeId: executionState.nodeId,
+    status: executionState.status,
+    failureReason: executionState.failureReason,
+  };
+}
+
+function toNodeExecutionResult(
+  executionState: NodeExecutionState,
+  attempts: NodeAttemptRecord[],
+  repairInstructions: RepairInstruction[],
+): NodeExecutionResult {
+  const history = {
+    nodeId: executionState.nodeId,
+    planSnapshotId: executionState.planSnapshotId,
+    attemptIds: attempts.map((attempt) => attempt.attempt.attemptId),
+    reviewReportIds: attempts.flatMap((attempt) =>
+      attempt.review ? [attempt.review.reportId] : [],
+    ),
+    judgeReportIds: attempts.flatMap((attempt) =>
+      attempt.judge ? [attempt.judge.reportId] : [],
+    ),
+    repairInstructions,
+    finalGatedCommitSha:
+      executionState.status === 'ready_to_merge'
+        ? attempts.at(-1)?.commit?.commitSha
+        : undefined,
+  };
+
+  return {
+    state: executionState,
+    history,
+    attempts,
+    appendedGraphWork: false,
+  };
+}
+
+function handleRepairableFailure(input: {
+  state: FactoryRunState;
+  executionState: NodeExecutionState;
+  attempts: NodeAttemptRecord[];
+  allRepairInstructions: RepairInstruction[];
+  attemptRecord: NodeAttemptRecord;
+  newRepairInstructions: RepairInstruction[];
+  failureReason: string;
+  attemptsRemaining: boolean;
+}): NodeExecutionResult | undefined {
+  input.attemptRecord.repairInstructions = input.newRepairInstructions;
+  input.allRepairInstructions.push(...input.newRepairInstructions);
+
+  const nodeLocal =
+    input.newRepairInstructions.length > 0 &&
+    input.newRepairInstructions.every(
+      (instruction) =>
+        instruction.nodeId === input.executionState.nodeId &&
+        instruction.scope === 'node_local',
+    );
+  if (!nodeLocal || !input.attemptsRemaining) {
+    input.executionState.status = 'needs_human';
+    input.executionState.activeAttemptId = undefined;
+    input.executionState.failureReason = !nodeLocal
+      ? `Gate produced out-of-scope work for ${input.executionState.nodeId}: ${input.failureReason}`
+      : `Node ${input.executionState.nodeId} exhausted attempts: ${input.failureReason}`;
+    const result = toNodeExecutionResult(
+      input.executionState,
+      input.attempts,
+      input.allRepairInstructions,
+    );
+    input.state.nodeRuns = {
+      ...(input.state.nodeRuns ?? {}),
+      [input.executionState.nodeId]: result,
+    };
+    updateNodeSummary(input.state, input.executionState);
+    return result;
+  }
+
+  input.executionState.status = 'repairing';
+  input.executionState.activeAttemptId = undefined;
+  input.executionState.failureReason = input.failureReason;
+  updateNodeSummary(input.state, input.executionState);
+  return undefined;
+}
+
+function mergeVerificationResults(
+  existing: NodeAttemptRecord['attempt']['testResults'],
+  latest: NodeAttemptRecord['attempt']['testResults'],
+): NodeAttemptRecord['attempt']['testResults'] {
+  const latestCommands = new Set(latest.map((result) => result.command));
+  return [...existing.filter((result) => !latestCommands.has(result.command)), ...latest];
+}
+
+function dedupe<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }

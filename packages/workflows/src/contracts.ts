@@ -1,14 +1,23 @@
 import type {
   ArtifactRef,
+  CommandResult,
   HumanGapRequest,
   HumanGapResult,
+  JudgeReport,
   NodeId,
+  NodeAttemptResult,
+  NodeExecutionState,
+  NodeRunHistory,
   PlanDAG,
   PlanSnapshotManifest,
+  RepairInstruction,
+  ReviewReport,
   StateRetryRequest,
   StateRetryResult,
   SkipDelayRequest,
   SkipDelayResult,
+  TaskNode,
+  VerificationResult,
 } from '@durafoundry/domain';
 
 export type FactoryRunStatus =
@@ -43,6 +52,15 @@ export interface FactoryRunActivities {
   createDraftPlan(input: FactoryRunInput): Promise<DraftPlanResult>;
 }
 
+export interface NodeExecutionActivities {
+  createNodeWorktree(input: CreateNodeWorktreeActivityInput): Promise<NodeWorktreeRef>;
+  runCoder(input: RunCoderActivityInput): Promise<NodeAttemptResult>;
+  runVerification(input: RunVerificationActivityInput): Promise<NodeVerificationGateResult>;
+  commitNodeChanges(input: CommitNodeChangesActivityInput): Promise<NodeCommitResult>;
+  runReviewer(input: RunGateActivityInput): Promise<NodeReviewGateResult>;
+  runJudge(input: RunGateActivityInput): Promise<NodeJudgeGateResult>;
+}
+
 export interface FactoryRunState {
   runId: string;
   status: FactoryRunStatus;
@@ -62,6 +80,7 @@ export interface FactoryRunState {
   };
   approvedSnapshot?: ApprovedPlanSnapshotRef;
   nodes: Record<NodeId, NodeStateSummary>;
+  nodeRuns?: Record<NodeId, NodeExecutionResult>;
   latestFailureReason?: string;
   paused: boolean;
   requestedFollowup?: HumanGapRequest;
@@ -69,7 +88,7 @@ export interface FactoryRunState {
 
 export interface NodeStateSummary {
   nodeId: NodeId;
-  status: 'blocked' | 'ready' | 'running' | 'cancelled' | 'skipped' | 'needs_human';
+  status: NodeExecutionState['status'] | 'cancelled';
   failureReason?: string;
 }
 
@@ -105,4 +124,117 @@ export interface CancelNodeUpdateInput {
 export interface GateOverrideUpdateInput {
   targetId: string;
   reason: string;
+}
+
+export interface ExecuteNodeRequest {
+  node: TaskNode;
+  dependencyIds: NodeId[];
+  repoPath: string;
+  trunkBranch: string;
+  worktreeRoot: string;
+  artifactRoot: string;
+  gitAuthor: GitAuthorRef;
+}
+
+export interface NodeExecutionWorkflowInput {
+  factoryState: FactoryRunState;
+  request: ExecuteNodeRequest;
+}
+
+export interface GitAuthorRef {
+  name: string;
+  email: string;
+}
+
+export interface CreateNodeWorktreeActivityInput {
+  repoPath: string;
+  trunkBranch: string;
+  worktreeRoot: string;
+  runId: string;
+  nodeId: NodeId;
+  baseRef?: string;
+}
+
+export interface NodeWorktreeRef {
+  repoPath: string;
+  worktreePath: string;
+  branchName: string;
+  baseRef: string;
+  baseCommitSha: string;
+}
+
+export interface RunCoderActivityInput {
+  repoPath: string;
+  nodeId: NodeId;
+  attemptId: string;
+  planSnapshotId: string;
+  artifactRoot: string;
+  repairInstructions?: RepairInstruction[];
+}
+
+export interface RunVerificationActivityInput {
+  nodeId: NodeId;
+  attemptId: string;
+  attemptNumber: number;
+  worktreePath: string;
+  command: string;
+  repairInstructions: RepairInstruction[];
+}
+
+export interface NodeVerificationGateResult {
+  result: VerificationResult;
+  repairInstructions: RepairInstruction[];
+}
+
+export interface CommitNodeChangesActivityInput {
+  worktreePath: string;
+  nodeId: NodeId;
+  message: string;
+  author: GitAuthorRef;
+  artifactRoot: string;
+}
+
+export interface NodeCommitResult {
+  worktreePath: string;
+  branchName: string;
+  commitSha: string;
+  changedFiles: string[];
+  diffUri?: string;
+  commandsRun: CommandResult[];
+}
+
+export interface RunGateActivityInput {
+  nodeId: NodeId;
+  attemptNumber: number;
+  attemptId: string;
+  commitSha: string;
+  changedFiles: string[];
+  diffUri?: string;
+  repairInstructions: RepairInstruction[];
+}
+
+export interface NodeReviewGateResult {
+  report: ReviewReport;
+  repairInstructions: RepairInstruction[];
+}
+
+export interface NodeJudgeGateResult {
+  report: JudgeReport;
+  repairInstructions: RepairInstruction[];
+}
+
+export interface NodeAttemptRecord {
+  attempt: NodeAttemptResult;
+  verification: VerificationResult;
+  commit?: NodeCommitResult;
+  review?: ReviewReport;
+  judge?: JudgeReport;
+  repairInstructions: RepairInstruction[];
+}
+
+export interface NodeExecutionResult {
+  state: NodeExecutionState;
+  history: NodeRunHistory;
+  attempts: NodeAttemptRecord[];
+  appendedGraphWork: false;
 }

@@ -12,6 +12,9 @@ import type {
   FactoryRunInput,
   FactoryRunState,
   GateOverrideUpdateInput,
+  NodeExecutionActivities,
+  NodeExecutionResult,
+  NodeExecutionWorkflowInput,
   PlanApprovalUpdateInput,
   PlanDecisionResult,
 } from './contracts.js';
@@ -28,6 +31,7 @@ import {
   approvePlanState,
   cancelNodeState,
   createInitialFactoryRunState,
+  executeNodeScaffold,
   overrideGateState,
   pauseRunState,
   requestFollowupDagState,
@@ -40,6 +44,9 @@ import {
 
 const activities = proxyActivities<FactoryRunActivities>({
   startToCloseTimeout: '1 minute',
+});
+const nodeActivities = proxyActivities<NodeExecutionActivities>({
+  startToCloseTimeout: '5 minutes',
 });
 
 export const getRunStateQuery = defineQuery<FactoryRunState>('getRunState');
@@ -108,4 +115,10 @@ export async function factoryRunWorkflow(input: FactoryRunInput): Promise<Factor
 
   await condition(() => terminal);
   return state;
+}
+
+export async function nodeExecutionWorkflow(
+  input: NodeExecutionWorkflowInput,
+): Promise<NodeExecutionResult> {
+  return executeNodeScaffold(input.factoryState, input.request, nodeActivities);
 }

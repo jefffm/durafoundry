@@ -4,12 +4,43 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 4, Plan Approval And Snapshot Execution.
-- Next chunk: Chunk 5, Node Execution Repair Loop.
+- Last completed chunk: Chunk 5, Node Execution Repair Loop.
+- Next chunk: Chunk 6, DAG Scheduler And Merge Queue.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 5: Node Execution Repair Loop
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added typed `NodeExecutionActivities` and `nodeExecutionWorkflow` entry point without importing Node-only Activity implementations into workflow code.
+- Added deterministic `executeNodeScaffold` behavior for one node: dependency readiness check, worktree creation, fake coder Activity call, local verification, checkpoint commit, reviewer gate, judge gate, node-local repair loop, and terminal max-attempt escalation.
+- Node attempt records include changed files, command results, verification results, diff URI, checkpoint commits, commit SHA, review report, judge report, and repair instructions.
+- Node run history records attempt ids, review report ids, judge report ids, repair instructions, and the final gated commit SHA when ready to merge.
+- Verification, review, and judge failures repair the same node when repair instructions are node-local.
+- Out-of-scope findings and failed gates without repair instructions escalate to `needs_human` without appending graph work.
+- Tests cover pass-first-time, reviewer fail then repair pass, judge fail then repair pass, verification fail then repair pass, all configured verification commands, max-attempt escalation, out-of-scope review escalation, missing repair instructions, and dependency blocking.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/workflows` passed.
+- `npm test --workspace @durafoundry/workflows -- --test-name-pattern "node|repair|judge|review"` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged workflow and progress diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the first implementation would have looped on a failed gate that returned no repair instructions.
+- Fix: failed gates now require at least one node-local repair instruction to continue repair; otherwise the node escalates to `needs_human`.
+- Finding: verification initially ran only the first command even though plan nodes carry an array of verification commands.
+- Fix: the node loop now runs every configured verification command until one fails, and test coverage asserts both commands are recorded.
 
 ### Chunk 4: Plan Approval And Snapshot Execution
 
@@ -146,4 +177,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 5 from `docs/execution-plan-v0.md`: implement the one-node execution repair loop with fake coder, verification, reviewer, judge, same-node repair, and max-attempt escalation.
+Start Chunk 6 from `docs/execution-plan-v0.md`: implement DAG scheduling, dependency readiness, parallelism limits, milestone ordering, and the root-scoped serial merge queue.
