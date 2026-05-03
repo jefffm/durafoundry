@@ -5,8 +5,8 @@ Each chunk should produce one reviewable commit unless the chunk explicitly says
 
 ## Execution Status
 
-- Last completed chunk: Chunk 0, Baseline Recheck.
-- Next chunk: Chunk 1, Real Git Activities.
+- Last completed chunk: Chunk 1, Real Git Activities.
+- Next chunk: Chunk 2, Fake Agent Activities.
 - Progress log: `progress.md`.
 
 ## Operating Rules
