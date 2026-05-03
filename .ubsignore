@@ -1,0 +1,15 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+coverage/
+
+# Package-manager/generated artifacts
+package-lock.json
+**/package-lock.json
+**/.package-lock.json
+
+# Live spike artifacts and one-off probe code are covered by their own command.
+spikes/
+
+# Test fixtures intentionally contain fake token-shaped strings.
+packages/*/test/

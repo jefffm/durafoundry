@@ -1,0 +1,20 @@
+{
+  "name": "durafoundry-flue-codex-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "probe": "tsx src/probe.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@flue/sdk": "^0.3.9",
+    "@mariozechner/pi-ai": "^0.66.1",
+    "valibot": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2"
+  }
+}

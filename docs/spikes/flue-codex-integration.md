@@ -1,8 +1,33 @@
 # Flue/Codex Integration Spike
 
-Status: planned  
+Status: completed  
 Owner: Jeff  
 Related spec sections: `docs/SPEC.md` sections 7.1.1 and 22
+
+## Result
+
+Outcome: Supported through Flue provider overrides.
+
+The spike initially confirmed that unmodified `@flue/sdk@0.3.6` could resolve
+`openai-codex/gpt-5.3-codex` but could not pass the Pi OAuth access token to
+pi-agent-core. Flue PR #29 added provider runtime settings via `init({
+providers })` and was released in `@flue/sdk@0.3.7`; the spike now passes with
+published `@flue/sdk@0.3.9`.
+
+DuraFoundry should not depend on Flue handling user OAuth. Instead,
+`packages/flue-runtime` reads and refreshes local Pi auth in userland, then
+passes only the current access token to Flue:
+
+```ts
+await init({
+  model: "openai-codex/gpt-5.3-codex",
+  providers: {
+    "openai-codex": { apiKey: accessToken },
+  },
+});
+```
+
+Latest local spike report: `spikes/flue-codex/REPORT.md`.
 
 ## Purpose
 

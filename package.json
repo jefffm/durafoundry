@@ -1,0 +1,25 @@
+{
+  "name": "durafoundry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "spikes/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "ubs": "ubs --ci .",
+    "ubs:diff": "ubs --ci --diff .",
+    "ubs:strict": "ubs --ci --fail-on-warning .",
+    "ubs:tests": "ubs --ci packages/*/test",
+    "ubs:spike": "ubs --ci spikes/flue-codex"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "typescript": "^5.9.2",
+    "valibot": "^1.1.0"
+  }
+}

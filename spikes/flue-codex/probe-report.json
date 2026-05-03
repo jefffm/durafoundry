@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-05-03T09:31:23.343Z",
+  "versions": {
+    "node": "v25.9.0",
+    "packageManager": "npm 11.6.2",
+    "@flue/sdk": "0.3.9",
+    "@mariozechner/pi-ai": "0.66.1",
+    "@mariozechner/pi-agent-core": "0.72.1",
+    "typescript": "5.9.3"
+  },
+  "environment": {
+    "baselineModel": "openai/gpt-4.1",
+    "codexModel": "openai-codex/gpt-5.3-codex",
+    "baselineCredentialEnvPresent": false,
+    "codexEnvCredentialPresent": false,
+    "piAuthFilePresent": true,
+    "piAuthOpenAICodexEntryPresent": true,
+    "piAuthOpenAICodexAccessUsable": true
+  },
+  "probes": {
+    "baseline": {
+      "provider": "openai",
+      "model": "gpt-4.1",
+      "ok": false,
+      "resultExtractionOk": false,
+      "eventStreamObserved": true,
+      "compactionObserved": false,
+      "errorClass": "Error",
+      "errorMessage": "[flue] prompt failed: No API key for provider: openai",
+      "redactionFindings": []
+    },
+    "codexResolution": {
+      "provider": "openai-codex",
+      "model": "gpt-5.3-codex",
+      "ok": true,
+      "resultExtractionOk": false,
+      "eventStreamObserved": false,
+      "compactionObserved": false,
+      "redactionFindings": []
+    },
+    "codexAuth": {
+      "provider": "openai-codex",
+      "model": "gpt-5.3-codex",
+      "ok": true,
+      "resultExtractionOk": false,
+      "eventStreamObserved": true,
+      "compactionObserved": false,
+      "redactionFindings": []
+    },
+    "codexPromptResult": {
+      "provider": "openai-codex",
+      "model": "gpt-5.3-codex",
+      "ok": true,
+      "resultExtractionOk": true,
+      "eventStreamObserved": true,
+      "compactionObserved": false,
+      "redactionFindings": []
+    },
+    "sessionCompaction": {
+      "provider": "openai-codex",
+      "model": "gpt-5.3-codex",
+      "ok": true,
+      "resultExtractionOk": false,
+      "eventStreamObserved": true,
+      "compactionObserved": false,
+      "redactionFindings": []
+    }
+  },
+  "decision": "supported",
+  "upstreamFlueApiSurfaceRequired": [
+    "Provider session affinity is still not exposed by AgentInit/PromptOptions; only Flue session IDs are stable."
+  ],
+  "tokenLeakCheck": {
+    "checkedArtifacts": [
+      "captured Flue events",
+      "REPORT.md",
+      "probe-report.json"
+    ],
+    "findings": []
+  }
+}
