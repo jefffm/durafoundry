@@ -11,6 +11,7 @@ import {
   requestFollowupDagState,
   requestPlanChangesState,
   rejectPlanState,
+  resumeRunState,
   runFactoryRunScaffold,
 } from './scaffold.js';
 
@@ -169,6 +170,11 @@ test('deterministic scaffold exposes pause and follow-up request transitions', a
   const paused = pauseRunState(state, 'operator pause');
   assert.equal(paused.status, 'paused');
   assert.equal(paused.paused, true);
+  assert.equal(paused.statusBeforePause, 'waiting_for_plan_approval');
+
+  const resumed = resumeRunState(state);
+  assert.equal(resumed.status, 'waiting_for_plan_approval');
+  assert.equal(resumed.paused, false);
 
   const followup = requestFollowupDagState(state, {
     requestId: 'request-1',

@@ -399,6 +399,21 @@ export async function executeDagScaffold(
         completedMilestones,
       )),
     );
+    const blockingGap = milestoneResults.find((milestone) => milestone.gapReports.length > 0);
+    if (blockingGap) {
+      state.status = 'needs_human';
+      state.latestFailureReason = `Milestone ${blockingGap.milestoneId} produced ${blockingGap.gapReports.length} follow-up gap report(s).`;
+      return {
+        state,
+        nodeResults,
+        mergedNodes,
+        cleanupResults,
+        milestoneResults,
+        maxObservedActiveNodes,
+        maxObservedActiveHighRiskNodes,
+        maxObservedMergeConcurrency,
+      };
+    }
   }
 
   if (state.status !== 'needs_human') {
@@ -474,8 +489,8 @@ export function requestPlanChangesState(
 }
 
 export function pauseRunState(state: FactoryRunState, reason: string): FactoryRunState {
-  state.paused = true;
   state.statusBeforePause = state.paused ? state.statusBeforePause : state.status;
+  state.paused = true;
   state.status = 'paused';
   state.latestFailureReason = reason;
   return state;

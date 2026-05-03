@@ -28,6 +28,7 @@ import type {
 import { executeDagScaffold } from './scaffold.js';
 import type {
   CommandResult,
+  GapReport,
   NodeAttemptResult,
   NodeId,
   PlanDAG,
@@ -147,6 +148,27 @@ test('dag scheduler finishes earlier milestones before later milestones', async 
   );
 });
 
+test('dag scheduler stops for human follow-up when milestone gates report gaps', async () => {
+  const plan = schedulerPlan({
+    nodes: [schedulerNode('node-a', 'low')],
+    edges: [],
+    maxActiveNodes: 1,
+    maxActiveHighRiskNodes: 1,
+  });
+  const state = approvedState(plan);
+  const result = await executeDagScaffold(
+    state,
+    dagRequest(plan, '/tmp/repo', '/tmp/artifacts'),
+    mockDagActivities({ emitBroadGap: true }),
+  );
+
+  assert.equal(result.state.status, 'needs_human');
+  assert.match(result.state.latestFailureReason ?? '', /follow-up gap report/);
+  assert.equal(result.mergedNodes.length, 1);
+  assert.equal(result.milestoneResults[0]?.gapReports.length, 1);
+  assert.equal(result.milestoneResults[0]?.gapReports[0]?.recommendedPlan, 'repair_dag');
+});
+
 function dagRequest(plan: PlanDAG, repoPath: string, artifactRoot: string): ExecuteDagRequest {
   return {
     plan,
@@ -257,9 +279,10 @@ function realFixtureActivities(
   };
 }
 
-function mockDagActivities(input: {
+function mockDagActivities(options: {
   starts?: NodeId[];
   batches?: NodeId[][];
+  emitBroadGap?: boolean;
 } = {}): DagExecutionActivities {
   let activeNodes: NodeId[] = [];
   return {
@@ -273,9 +296,9 @@ function mockDagActivities(input: {
       };
     },
     async runCoder(request) {
-      input.starts?.push(request.nodeId);
+      options.starts?.push(request.nodeId);
       activeNodes.push(request.nodeId);
-      input.batches?.push([...activeNodes]);
+      options.batches?.push([...activeNodes]);
       return fakeAttempt(request.nodeId, request.attemptId, request.planSnapshotId);
     },
     async runVerification(request) {
@@ -333,21 +356,39 @@ function mockDagActivities(input: {
         commandsRun: [commandResult('git worktree remove')],
       };
     },
-    async runBroadReviewer(input) {
+    async runBroadReviewer(request) {
+      if (options.emitBroadGap) {
+        return {
+          report: {
+            ...passReviewReport(request.milestoneId),
+            milestoneId: request.milestoneId,
+            nodeId: undefined,
+            reviewerRole: 'broad_reviewer',
+            status: 'fail',
+            summary: 'Review found follow-up graph work.',
+            failureClassification: {
+              scope: 'plan_gap',
+              explanation: 'The milestone needs follow-up work.',
+              recommendedAction: 'create_followup_dag',
+            },
+          },
+          gapReport: milestoneGapReport(request.milestoneId),
+        };
+      }
       return {
         report: {
-          ...passReviewReport(input.milestoneId),
-          milestoneId: input.milestoneId,
+          ...passReviewReport(request.milestoneId),
+          milestoneId: request.milestoneId,
           nodeId: undefined,
           reviewerRole: 'broad_reviewer',
         },
       };
     },
-    async runBroadJudge(input) {
+    async runBroadJudge(request) {
       return {
         report: {
-          ...passJudgeReport(input.milestoneId),
-          milestoneId: input.milestoneId,
+          ...passJudgeReport(request.milestoneId),
+          milestoneId: request.milestoneId,
           nodeId: undefined,
           judgeRole: 'broad_judge',
         },
@@ -524,6 +565,27 @@ function passJudgeReport(id: string) {
     cutCornerFindings: [],
     requiredFixes: [],
     evidenceUris: [],
+  };
+}
+
+function milestoneGapReport(milestoneId: string): GapReport {
+  return {
+    gapReportId: `gap-${milestoneId}`,
+    source: 'milestone_review',
+    milestoneId,
+    summary: 'Milestone review found follow-up work.',
+    gaps: [
+      {
+        id: 'gap-1',
+        severity: 'high',
+        category: 'quality-gap',
+        description: 'Add follow-up graph work.',
+        affectedRequirements: ['REQ-1'],
+        suggestedTasks: ['Create a follow-up node.'],
+        blocking: true,
+      },
+    ],
+    recommendedPlan: 'repair_dag',
   };
 }
 

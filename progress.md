@@ -4,12 +4,51 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 
 ## Current State
 
-- Last completed chunk: Chunk 9, End-To-End Fixture Acceptance.
-- Next chunk: Chunk 10, Spec Review And Hardening.
+- Last completed chunk: Chunk 10, Spec Review And Hardening.
+- Next chunk: all planned v0 execution chunks complete; see `docs/v0-hardening-review.md` for next steps.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Chunk 10: Spec Review And Hardening
+
+Status: complete.
+
+Acceptance evidence:
+
+- Reviewed the implemented v0 fixture slice against `docs/SPEC.md` and `docs/execution-plan-v0.md`.
+- Fixed a blocking false-success bug where milestone broad gates could emit gap reports while the DAG scaffold still marked the run `completed`.
+- Fixed `pauseRunState` so pause/resume preserves the exact pre-pause status boundary.
+- Added regression coverage for milestone gap reports stopping the line at `needs_human`.
+- Added regression coverage for pausing during plan approval and resuming back to `waiting_for_plan_approval`.
+- Added `docs/v0-hardening-review.md` with the review result, applied blocking fixes, checklist status, and nonblocking next steps.
+- Linked the hardening review from `README.md`.
+
+Validation evidence:
+
+- `npm run typecheck --workspace @durafoundry/workflows` passed.
+- `npm test --workspace @durafoundry/workflows` passed.
+- `npm run typecheck --workspaces --if-present` passed.
+- `npm test --workspaces --if-present` passed.
+- `npm audit` passed with 0 vulnerabilities.
+- `npm run ubs:diff` scanned the staged hardening diff with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the scheduler treated broad-gate gap reports as informational while still completing the run.
+- Fix: broad-gate gap reports now stop the line at `needs_human`, preserving explicit follow-up DAG control.
+- Finding: pause state bookkeeping could lose the exact status being paused.
+- Fix: pause state records the prior status before marking the run paused.
+
+Nonblocking next steps:
+
+- Add a real local Temporal worker/client demo path; the current CLI uses the deterministic scaffold directly.
+- Execute approved follow-up DAGs after approval rather than only modeling the control state.
+- Wire automatic broad-gap planning through an Activity boundary.
+- Replace fake agent Activities with Flue-backed Activities using `packages/flue-runtime`.
+- Add branch-and-PR mode and a repo/trunk-scoped global merge queue before shared/protected repository use.
 
 ### Chunk 9: End-To-End Fixture Acceptance
 
@@ -295,4 +334,4 @@ Notes:
 
 ## Next Action
 
-Start Chunk 10 from `docs/execution-plan-v0.md`: review the implemented v0 against the SPEC and execution plan, fix any blocking bugs or gaps immediately, and leave a concise next-steps report for nonblocking work.
+All planned v0 execution chunks are complete. Next work should start from the nonblocking next steps in `docs/v0-hardening-review.md`.
