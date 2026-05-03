@@ -12,6 +12,9 @@ export const AttemptIdSchema = v.string();
 export const ArtifactUriSchema = v.string();
 export const RepoIdSchema = v.string();
 export const PlanSnapshotIdSchema = v.string();
+export const FactoryStateIdSchema = v.string();
+export const StateExecutionIdSchema = v.string();
+export const DelayIdSchema = v.string();
 
 export const ArtifactRefSchema = v.object({
   uri: ArtifactUriSchema,
@@ -213,6 +216,120 @@ export const PlanSnapshotSchema = v.object({
   createdAt: IsoTimestampSchema,
   approvedBy: v.string(),
   status: v.picklist(['approved', 'executing', 'completed', 'superseded']),
+});
+
+export const StateWaitConditionSchema = v.variant('type', [
+  v.object({
+    type: v.literal('approval'),
+    approvalKind: v.picklist(['spec', 'plan', 'gap-dag', 'override']),
+  }),
+  v.object({
+    type: v.literal('dependency'),
+    nodeIds: v.array(NodeIdSchema),
+  }),
+  v.object({
+    type: v.literal('timer'),
+    delayId: DelayIdSchema,
+    durationSeconds: v.number(),
+  }),
+  v.object({
+    type: v.literal('external-event'),
+    signalName: v.string(),
+  }),
+  v.object({
+    type: v.literal('child-workflow'),
+    workflowId: v.string(),
+  }),
+]);
+
+export const StateActionSchema = v.variant('type', [
+  v.object({
+    type: v.literal('activity'),
+    activityName: v.string(),
+  }),
+  v.object({
+    type: v.literal('child-workflow'),
+    workflowType: v.string(),
+  }),
+  v.object({
+    type: v.literal('transition'),
+    to: v.string(),
+  }),
+  v.object({
+    type: v.literal('continue-as-new'),
+  }),
+  v.object({
+    type: v.literal('complete'),
+  }),
+  v.object({
+    type: v.literal('fail'),
+  }),
+  v.object({
+    type: v.literal('needs-human'),
+  }),
+]);
+
+export const FactoryStateDefinitionSchema = v.object({
+  stateId: FactoryStateIdSchema,
+  ownerWorkflowType: v.string(),
+  kind: v.picklist(['spec', 'plan', 'dag', 'node', 'gate', 'merge', 'milestone', 'gap', 'final']),
+  waitsFor: v.array(StateWaitConditionSchema),
+  executes: v.array(StateActionSchema),
+  legalNextStates: v.array(v.string()),
+  retryPolicy: v.picklist(['none', 'activity', 'state', 'human']),
+  resetPolicy: v.picklist(['forbidden', 'operator-only', 'allowed']),
+});
+
+export const StateTransitionEventSchema = v.object({
+  eventId: v.string(),
+  stateExecutionId: StateExecutionIdSchema,
+  fromStateId: FactoryStateIdSchema,
+  toStateId: v.union([FactoryStateIdSchema, v.picklist(['complete', 'fail', 'needs-human'])]),
+  reason: v.string(),
+  at: IsoTimestampSchema,
+  actor: v.picklist(['workflow', 'activity', 'human', 'system']),
+  artifactUris: v.array(ArtifactUriSchema),
+});
+
+export const FactoryStateExecutionSchema = v.object({
+  stateExecutionId: StateExecutionIdSchema,
+  stateId: FactoryStateIdSchema,
+  ownerWorkflowId: v.string(),
+  ownerWorkflowType: v.string(),
+  status: v.picklist(['waiting', 'executing', 'completed', 'failed', 'skipped', 'needs_human']),
+  startedAt: IsoTimestampSchema,
+  completedAt: v.optional(IsoTimestampSchema),
+  waitsFor: v.array(StateWaitConditionSchema),
+  lastTransition: v.optional(StateTransitionEventSchema),
+  artifactUris: v.array(ArtifactUriSchema),
+});
+
+export const StateRetryRequestSchema = v.object({
+  stateExecutionId: StateExecutionIdSchema,
+  requestedBy: v.string(),
+  reason: v.string(),
+  instructions: v.optional(v.string()),
+  expectedStateVersion: v.optional(v.string()),
+});
+
+export const StateRetryResultSchema = v.object({
+  accepted: v.boolean(),
+  newStateExecutionId: v.optional(StateExecutionIdSchema),
+  rejectedReason: v.optional(v.string()),
+});
+
+export const SkipDelayRequestSchema = v.object({
+  delayId: DelayIdSchema,
+  requestedBy: v.string(),
+  reason: v.string(),
+  operatorMode: v.picklist(['test', 'production']),
+  expectedStateVersion: v.optional(v.string()),
+});
+
+export const SkipDelayResultSchema = v.object({
+  accepted: v.boolean(),
+  affectedStateExecutionId: v.optional(StateExecutionIdSchema),
+  rejectedReason: v.optional(v.string()),
 });
 
 export const CommandResultSchema = v.object({
@@ -502,6 +619,9 @@ export type AttemptId = v.InferOutput<typeof AttemptIdSchema>;
 export type ArtifactUri = v.InferOutput<typeof ArtifactUriSchema>;
 export type RepoId = v.InferOutput<typeof RepoIdSchema>;
 export type PlanSnapshotId = v.InferOutput<typeof PlanSnapshotIdSchema>;
+export type FactoryStateId = v.InferOutput<typeof FactoryStateIdSchema>;
+export type StateExecutionId = v.InferOutput<typeof StateExecutionIdSchema>;
+export type DelayId = v.InferOutput<typeof DelayIdSchema>;
 export type ArtifactRef = v.InferOutput<typeof ArtifactRefSchema>;
 export type Requirement = v.InferOutput<typeof RequirementSchema>;
 export type Constraint = v.InferOutput<typeof ConstraintSchema>;
@@ -521,6 +641,15 @@ export type PlanDAG = v.InferOutput<typeof PlanDAGSchema>;
 export type SnapshotArtifact = v.InferOutput<typeof SnapshotArtifactSchema>;
 export type PlanSnapshotManifest = v.InferOutput<typeof PlanSnapshotManifestSchema>;
 export type PlanSnapshot = v.InferOutput<typeof PlanSnapshotSchema>;
+export type StateWaitCondition = v.InferOutput<typeof StateWaitConditionSchema>;
+export type StateAction = v.InferOutput<typeof StateActionSchema>;
+export type FactoryStateDefinition = v.InferOutput<typeof FactoryStateDefinitionSchema>;
+export type StateTransitionEvent = v.InferOutput<typeof StateTransitionEventSchema>;
+export type FactoryStateExecution = v.InferOutput<typeof FactoryStateExecutionSchema>;
+export type StateRetryRequest = v.InferOutput<typeof StateRetryRequestSchema>;
+export type StateRetryResult = v.InferOutput<typeof StateRetryResultSchema>;
+export type SkipDelayRequest = v.InferOutput<typeof SkipDelayRequestSchema>;
+export type SkipDelayResult = v.InferOutput<typeof SkipDelayResultSchema>;
 export type CommandResult = v.InferOutput<typeof CommandResultSchema>;
 export type VerificationResult = v.InferOutput<typeof VerificationResultSchema>;
 export type GateFailureScope = v.InferOutput<typeof GateFailureScopeSchema>;
