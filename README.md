@@ -7,6 +7,7 @@ DuraFoundry turns approved software specifications into structured execution DAG
 ## Documentation
 
 - [Specification](docs/SPEC.md)
+- [V0 execution plan](docs/execution-plan-v0.md)
 - [Flue/Codex integration spike](docs/spikes/flue-codex-integration.md)
 
 ## Packages
