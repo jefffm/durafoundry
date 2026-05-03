@@ -5,12 +5,42 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 0, Nix Temporal Environment Baseline.
-- Next chunk: Temporal V0 Chunk 1, Temporal Dependencies And Test Harness.
+- Last completed chunk: Temporal V0 Chunk 1, Temporal Dependencies And Test Harness.
+- Next chunk: Temporal V0 Chunk 2, Real FactoryRunWorkflow End-To-End State Machine.
 - Current branch: `main`.
 - Last validation date: 2026-05-03.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 1: Temporal Dependencies And Test Harness
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added `@temporalio/client`, `@temporalio/worker`, and `@temporalio/testing` to the workflow workspace.
+- Added a Node-side Temporal test harness that starts a local Temporal test environment using the Nix-provided `temporal` CLI.
+- The harness creates a Worker with a unique task queue, registers Activity implementations, starts workflows through a Temporal Client, supports Updates and Queries through workflow handles, and tears down the server after the Worker drains.
+- Added a real Temporal smoke test that starts `factoryRunWorkflow`, waits for `waiting_for_plan_approval` through a Query, approves the plan through the `approvePlan` Update, and awaits the workflow result.
+- Verified workflow implementation files still only import `@temporalio/workflow`; Node-only Temporal packages are isolated to the test harness and tests.
+- Overrode Temporal's transitive `uuid` dependency to `14.0.0` so `npm audit` remains clean, then proved the SDK still works with the real Temporal smoke test.
+
+Validation evidence:
+
+- `nix develop -c npm run typecheck --workspace @durafoundry/workflows` passed.
+- `nix develop -c npm test --workspace @durafoundry/workflows -- --test-name-pattern "temporal|worker|client|update|query"` passed, including the real Temporal Worker/Client smoke test.
+- `nix develop -c bash -lc 'npm run typecheck --workspaces --if-present && npm test --workspaces --if-present && npm audit && npm run ubs:diff'` passed.
+- `npm audit` passed with 0 vulnerabilities after the `uuid` override.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: installing the latest Temporal JS SDK introduced a moderate `uuid` advisory through `@temporalio/client`.
+- Fix: added a root npm override for `@temporalio/client@1.17.0` to use `uuid@14.0.0`, reran install/audit, and validated the SDK with the real Temporal smoke test.
+- Finding: `@temporalio/testing` was initially installed as a runtime dependency.
+- Fix: moved `@temporalio/testing` to workflow devDependencies.
+- Finding: workflow determinism could be compromised if Client/Worker imports leaked into workflow code.
+- Fix: verified the deterministic workflow files do not import `@temporalio/client`, `@temporalio/worker`, `@temporalio/testing`, or Node built-ins.
 
 ### Temporal V0 Autonomous Queue Setup
 

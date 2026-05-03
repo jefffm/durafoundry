@@ -15,8 +15,8 @@ Do not add Flue-backed agents, dashboard/API work, protected repository support,
 
 ## Execution Status
 
-- Last completed chunk: Chunk 0, Nix Temporal Environment Baseline.
-- Next chunk: Chunk 1, Temporal Dependencies And Test Harness.
+- Last completed chunk: Chunk 1, Temporal Dependencies And Test Harness.
+- Next chunk: Chunk 2, Real FactoryRunWorkflow End-To-End State Machine.
 - Progress log: `progress.md`.
 
 ## Operating Rules

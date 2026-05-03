@@ -23,6 +23,9 @@
     "valibot": "^1.1.0"
   },
   "overrides": {
+    "@temporalio/client@1.17.0": {
+      "uuid": "14.0.0"
+    },
     "@flue/sdk": {
       "just-bash": {
         "fast-xml-parser": "5.7.2"
