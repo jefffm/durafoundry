@@ -104,9 +104,3 @@ long-running local Temporal dev server at `127.0.0.1:7233` with the UI at
 - `npm run ubs:strict` to fail on warnings/critical findings
 - `npm run ubs:tests` to scan test files separately
 - `npm run ubs:spike` to scan the live Flue/Codex spike separately
-
-The earlier spec-only repository is retained as project history:
-
-- https://github.com/jefffm/software-factory-orchestrator-spec
-
-This repository is the implementation home.
