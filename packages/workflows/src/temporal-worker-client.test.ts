@@ -6,7 +6,10 @@ import assert from 'node:assert/strict';
 
 import type {
   CommandResult,
+  DagEdge,
+  HumanGapRequest,
   JudgeReport,
+  NodeId,
   NodeAttemptResult,
   ReviewReport,
 } from '@durafoundry/domain';
@@ -18,9 +21,19 @@ import type {
 } from './contracts.js';
 import { createTemporalWorkerClientHarness } from './temporal-test-harness.js';
 import {
+  approveFollowupDagUpdate,
   approvePlanUpdate,
+  cancelNodeUpdate,
   factoryRunWorkflow,
   getRunStateQuery,
+  overrideGateUpdate,
+  pauseRunUpdate,
+  rejectPlanUpdate,
+  requestFollowupDagUpdate,
+  requestPlanChangesUpdate,
+  resumeRunUpdate,
+  retryFromStateUpdate,
+  skipDelayUpdate,
 } from './workflows.js';
 
 test('temporal worker/client smoke starts workflow, queries state, sends update, and awaits result', async () => {
@@ -107,6 +120,185 @@ test('temporal worker/client smoke starts workflow, queries state, sends update,
   }
 });
 
+test('temporal plan control updates are queryable and acknowledge decisions', async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'durafoundry-temporal-control-'));
+  const input = factoryInput('run-temporal-control-plan', artifactRoot);
+  const harness = await createTemporalWorkerClientHarness({
+    activities: temporalSmokeActivities(),
+    taskQueuePrefix: 'durafoundry-temporal-control-plan',
+  });
+
+  try {
+    await harness.runUntil(async () => {
+      const rejectHandle = await startFactoryRun(harness, input, 'reject');
+      const waitingState = await waitForPlanApproval(() => rejectHandle.query(getRunStateQuery));
+
+      const paused = await rejectHandle.executeUpdate(pauseRunUpdate, {
+        args: ['operator review'],
+      });
+      assert.equal(paused.status, 'paused');
+      assert.equal(paused.paused, true);
+      assert.equal(paused.plan?.planId, 'plan-1');
+      assert.equal(paused.latestFailureReason, 'operator review');
+
+      const pausedApproval = await rejectHandle.executeUpdate(approvePlanUpdate, {
+        args: [approvalFor(waitingState, 'paused-approval')],
+      });
+      assert.equal(pausedApproval.accepted, false);
+      assert.match(pausedApproval.rejectedReason ?? '', /not waiting/);
+
+      const resumed = await rejectHandle.executeUpdate(resumeRunUpdate, {
+        args: ['operator resume'],
+      });
+      assert.equal(resumed.status, 'waiting_for_plan_approval');
+      assert.equal(resumed.paused, false);
+
+      const rejected = await rejectHandle.executeUpdate(rejectPlanUpdate, {
+        args: [approvalFor(waitingState, 'operator reject')],
+      });
+      assert.equal(rejected.accepted, true);
+      assert.equal(rejected.status, 'plan_rejected');
+      assert.equal((await rejectHandle.result()).status, 'plan_rejected');
+
+      const changeHandle = await startFactoryRun(harness, input, 'changes');
+      const changeWaitingState = await waitForPlanApproval(() =>
+        changeHandle.query(getRunStateQuery),
+      );
+      const changes = await changeHandle.executeUpdate(requestPlanChangesUpdate, {
+        args: [approvalFor(changeWaitingState, 'operator changes')],
+      });
+      assert.equal(changes.accepted, true);
+      assert.equal(changes.status, 'changes_requested');
+      assert.equal((await changeHandle.result()).status, 'changes_requested');
+    });
+  } finally {
+    await harness.teardown();
+  }
+});
+
+test('temporal execution controls pause scheduling and expose human follow-up state', async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'durafoundry-temporal-human-control-'));
+  const input = factoryInput('run-temporal-human-control', artifactRoot);
+  const harness = await createTemporalWorkerClientHarness({
+    activities: temporalSmokeActivities({
+      delayWorktreeMs: 500,
+      nodeIds: ['node-1', 'node-2'],
+      edges: [{ from: 'node-1', to: 'node-2', reason: 'node-2 depends on node-1' }],
+      maxActiveNodes: 1,
+    }),
+    taskQueuePrefix: 'durafoundry-temporal-human-control',
+  });
+
+  try {
+    await harness.runUntil(async () => {
+      const handle = await startFactoryRun(harness, input, 'human-control');
+      const waitingState = await waitForPlanApproval(() => handle.query(getRunStateQuery));
+      const approval = await handle.executeUpdate(approvePlanUpdate, {
+        args: [approvalFor(waitingState, 'operator approve')],
+      });
+      assert.equal(approval.accepted, true);
+
+      const paused = await handle.executeUpdate(pauseRunUpdate, {
+        args: ['pause before launching more nodes'],
+      });
+      assert.equal(paused.status, 'paused');
+      assert.equal(paused.paused, true);
+
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const pausedQuery = await handle.query(getRunStateQuery);
+      assert.equal(pausedQuery.status, 'paused');
+      assert.equal(pausedQuery.nodes['node-2']?.status, 'ready');
+
+      const cancelled = await handle.executeUpdate(cancelNodeUpdate, {
+        args: [{ nodeId: 'node-2', reason: 'bad discovery' }],
+      });
+      assert.equal(cancelled.nodes['node-2']?.status, 'cancelled');
+
+      const overridden = await handle.executeUpdate(overrideGateUpdate, {
+        args: [{ targetId: 'node-1-review', reason: 'operator accepted fixture risk' }],
+      });
+      assert.match(overridden.latestFailureReason ?? '', /Gate override/);
+
+      const followup = await handle.executeUpdate(requestFollowupDagUpdate, {
+        args: [humanGapRequest()],
+      });
+      assert.equal(followup.accepted, true);
+      assert.equal(followup.pendingApproval, true);
+      assert.equal(followup.runPaused, true);
+
+      const followupQuery = await handle.query(getRunStateQuery);
+      assert.equal(followupQuery.paused, true);
+      assert.equal(followupQuery.requestedFollowup?.requestId, 'gap-request-1');
+      assert.equal(followupQuery.followupDag?.status, 'waiting_for_approval');
+      assert.equal(followupQuery.followupDag?.requiresApproval, true);
+
+      const staleFollowupApproval = await handle.executeUpdate(approveFollowupDagUpdate, {
+        args: [
+          {
+            planId: 'stale-followup',
+            artifactUri: followupQuery.followupDag?.artifactUri ?? '',
+            artifactSha256: followupQuery.followupDag?.artifactSha256,
+            actor: 'operator',
+          },
+        ],
+      });
+      assert.equal(staleFollowupApproval.accepted, false);
+
+      const followupApproval = await handle.executeUpdate(approveFollowupDagUpdate, {
+        args: [
+          {
+            planId: followupQuery.followupDag?.planId ?? '',
+            artifactUri: followupQuery.followupDag?.artifactUri ?? '',
+            artifactSha256: followupQuery.followupDag?.artifactSha256,
+            actor: 'operator',
+          },
+        ],
+      });
+      assert.equal(followupApproval.accepted, true);
+      assert.equal((await handle.query(getRunStateQuery)).followupDag?.status, 'approved');
+
+      const retry = await handle.executeUpdate(retryFromStateUpdate, {
+        args: [
+          {
+            stateExecutionId: 'state-node-1',
+            requestedBy: 'operator',
+            reason: 'manual test',
+          },
+        ],
+      });
+      assert.equal(retry.accepted, false);
+      assert.match(retry.rejectedReason ?? '', /not implemented/);
+
+      const skip = await handle.executeUpdate(skipDelayUpdate, {
+        args: [
+          {
+            delayId: 'delay-node-1',
+            requestedBy: 'operator',
+            reason: 'manual test',
+            operatorMode: 'test',
+          },
+        ],
+      });
+      assert.equal(skip.accepted, false);
+      assert.match(skip.rejectedReason ?? '', /not implemented/);
+
+      const resumed = await handle.executeUpdate(resumeRunUpdate, {
+        args: ['resume after follow-up approval'],
+      });
+      assert.equal(resumed.status, 'executing_dag');
+      assert.equal(resumed.paused, false);
+
+      const finalState = await handle.result();
+      assert.equal(finalState.status, 'needs_human');
+      assert.equal(finalState.nodes['node-1']?.status, 'merged');
+      assert.equal(finalState.nodes['node-2']?.status, 'cancelled');
+      assert.match(finalState.latestFailureReason ?? '', /no schedulable ready nodes/);
+    });
+  } finally {
+    await harness.teardown();
+  }
+});
+
 async function waitForPlanApproval(
   queryState: () => Promise<FactoryRunState>,
 ) {
@@ -133,10 +325,16 @@ async function waitForStatus(
 }
 
 function temporalSmokeActivities(
-  options: { delayWorktreeMs?: number } = {},
+  options: {
+    delayWorktreeMs?: number;
+    nodeIds?: NodeId[];
+    edges?: DagEdge[];
+    maxActiveNodes?: number;
+  } = {},
 ): FactoryRunActivities & DagExecutionActivities {
   return {
     async createDraftPlan() {
+      const nodeIds = options.nodeIds ?? ['node-1'];
       const plan = {
         planId: 'plan-1',
         dagId: 'dag-1',
@@ -153,7 +351,7 @@ function temporalSmokeActivities(
             id: 'milestone-1',
             title: 'Milestone 1',
             description: 'Mock milestone',
-            nodeIds: ['node-1'],
+            nodeIds,
             reviewPolicy: {
               runBroadReview: true,
               runBroadJudge: true,
@@ -163,33 +361,31 @@ function temporalSmokeActivities(
             acceptanceCriteria: ['Mock milestone passes.'],
           },
         ],
-        nodes: [
-          {
-            id: 'node-1',
-            milestoneId: 'milestone-1',
-            title: 'Node 1',
-            kind: 'code' as const,
-            bodyUri: 'file:///node-1.md',
-            description: 'Mock node',
-            requirements: ['Mock requirement'],
-            specRequirementIds: ['REQ-1'],
-            acceptanceCriteria: ['Mock acceptance'],
-            verificationCommands: ['npm test'],
-            reviewerFocus: ['Mock focus'],
-            judgeRubric: ['Mock rubric'],
-            riskLevel: 'low' as const,
-            worktree: {
-              mode: 'per-node' as const,
-              baseRef: 'main',
-              cleanup: 'after-merge' as const,
-            },
-            maxAttempts: 2,
+        nodes: nodeIds.map((nodeId) => ({
+          id: nodeId,
+          milestoneId: 'milestone-1',
+          title: nodeId,
+          kind: 'code' as const,
+          bodyUri: `file:///${nodeId}.md`,
+          description: 'Mock node',
+          requirements: ['Mock requirement'],
+          specRequirementIds: ['REQ-1'],
+          acceptanceCriteria: ['Mock acceptance'],
+          verificationCommands: ['npm test'],
+          reviewerFocus: ['Mock focus'],
+          judgeRubric: ['Mock rubric'],
+          riskLevel: 'low' as const,
+          worktree: {
+            mode: 'per-node' as const,
+            baseRef: 'main',
+            cleanup: 'after-merge' as const,
           },
-        ],
-        edges: [],
+          maxAttempts: 2,
+        })),
+        edges: options.edges ?? [],
         globalAcceptanceCriteria: ['Mock plan completes.'],
         parallelism: {
-          maxActiveNodes: 1,
+          maxActiveNodes: options.maxActiveNodes ?? 1,
           maxActiveHighRiskNodes: 1,
           mergeConcurrency: 1 as const,
         },
@@ -217,13 +413,16 @@ function temporalSmokeActivities(
             sha256: 'plan-sha',
             kind: 'plan-json' as const,
           },
-          nodeBodies: {
-            'node-1': {
-              uri: 'file:///node-1.md',
-              sha256: 'node-body-sha',
-              kind: 'node-body' as const,
-            },
-          },
+          nodeBodies: Object.fromEntries(
+            nodeIds.map((nodeId) => [
+              nodeId,
+              {
+                uri: `file:///${nodeId}.md`,
+                sha256: 'node-body-sha',
+                kind: 'node-body' as const,
+              },
+            ]),
+          ),
           milestoneBodies: {
             'milestone-1': {
               uri: 'file:///milestone-1.md',
@@ -330,6 +529,72 @@ function temporalSmokeActivities(
           judgeRole: 'broad_judge' as const,
         },
       };
+    },
+  };
+}
+
+function factoryInput(runId: string, artifactRoot: string): FactoryRunInput {
+  return {
+    runId,
+    specUri: 'file:///spec.md',
+    specSha256: 'spec-sha',
+    artifactRoot,
+    runtime: {
+      repoPath: '/tmp/fixture-repo',
+      trunkBranch: 'main',
+      worktreeRoot: join(artifactRoot, 'worktrees'),
+      gitAuthor: {
+        name: 'DuraFoundry',
+        email: 'durafoundry@example.invalid',
+      },
+    },
+  };
+}
+
+async function startFactoryRun(
+  harness: Awaited<ReturnType<typeof createTemporalWorkerClientHarness>>,
+  input: FactoryRunInput,
+  suffix: string,
+) {
+  return harness.env.client.workflow.start(factoryRunWorkflow, {
+    args: [input],
+    taskQueue: harness.taskQueue,
+    workflowId: `${input.runId}-${suffix}-${Date.now()}`,
+  });
+}
+
+function approvalFor(state: FactoryRunState, actor: string) {
+  return {
+    planId: state.plan?.planId ?? '',
+    artifactUri: state.plan?.artifactUri ?? '',
+    artifactSha256: state.plan?.artifactSha256,
+    actor,
+  };
+}
+
+function humanGapRequest(): HumanGapRequest {
+  return {
+    requestId: 'gap-request-1',
+    actor: 'operator',
+    reason: 'bad discovery',
+    pauseScheduling: true,
+    requiresApprovalOverride: true,
+    gapReport: {
+      gapReportId: 'gap-report-1',
+      source: 'human_intervention',
+      summary: 'A bad discovery needs follow-up work.',
+      recommendedPlan: 'repair_dag',
+      gaps: [
+        {
+          id: 'gap-1',
+          severity: 'high',
+          category: 'quality-gap',
+          description: 'The run needs operator-directed follow-up.',
+          affectedRequirements: ['REQ-1'],
+          suggestedTasks: ['Add the missing follow-up handling.'],
+          blocking: true,
+        },
+      ],
     },
   };
 }

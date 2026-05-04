@@ -5,12 +5,45 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 4, Temporal CLI Worker And Client Path.
-- Next chunk: Temporal V0 Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
+- Last completed chunk: Temporal V0 Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
+- Next chunk: Temporal V0 Chunk 6, Temporal Cancellation, Cleanup, And Failure Semantics.
 - Current branch: `main`.
 - Last validation date: 2026-05-04.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 5: Temporal Updates, Queries, Pause, And Human Control
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added real Temporal integration coverage for `approvePlan`, stale `approvePlan`, `rejectPlan`, `requestPlanChanges`, `pauseRun`, `resumeRun`, `cancelNode`, `overrideGate`, `requestFollowupDag`, `approveFollowupDag`, `retryFromState`, and `skipDelay`.
+- Tests assert Update acknowledgement payloads and Query output before and after control actions.
+- Query assertions cover run status, plan refs, approved snapshot refs, node summaries, latest failure reason, paused state, requested follow-up, and follow-up DAG state.
+- Added pause-aware DAG execution boundaries so a run paused while an Activity is in flight waits for resume before merging or launching later nodes.
+- The Temporal pause test proves `node-2` remains `ready` while the workflow is paused after `node-1` work has been allowed to finish.
+- Human follow-up requests now create a deterministic pending follow-up DAG control state when a parent snapshot is approved, allowing stale and matching `approveFollowupDag` Updates to be tested through Temporal.
+- `retryFromState` and `skipDelay` Updates are exercised through Temporal and currently return explicit scaffold rejections rather than silently succeeding.
+
+Validation evidence:
+
+- `nix develop -c npm run typecheck --workspace @durafoundry/workflows` passed.
+- `nix develop -c npm test --workspace @durafoundry/workflows -- --test-name-pattern "update|query|pause|resume|followup|temporal"` passed.
+- `nix develop -c npm run typecheck --workspaces --if-present` passed.
+- `nix develop -c npm test --workspaces --if-present` passed.
+- `nix develop -c npm audit` passed with 0 vulnerabilities.
+- `nix develop -c npm run ubs:diff` passed with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: pause Updates could set the workflow state to paused while an Activity was in flight, but the DAG runner would continue to merge and schedule later nodes after the Activity returned.
+- Fix: added pause-aware DAG execution control that waits on a Temporal `condition(() => !state.paused)` before continuing at scheduling/merge boundaries.
+- Finding: follow-up DAG approval could not be exercised through Temporal because `requestFollowupDag` only recorded the request and never exposed a pending follow-up DAG.
+- Fix: when a parent snapshot exists, the workflow now creates a deterministic minimal follow-up DAG draft in workflow state so stale and matching `approveFollowupDag` Updates can be validated.
+- Finding: the original Temporal smoke test only covered the approve happy path plus stale approval.
+- Fix: added dedicated Temporal control tests for plan decisions, pause/resume, human intervention, retry, and skip-delay.
 
 ### Temporal V0 Chunk 4: Temporal CLI Worker And Client Path
 

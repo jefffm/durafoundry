@@ -15,8 +15,8 @@ Do not add Flue-backed agents, dashboard/API work, protected repository support,
 
 ## Execution Status
 
-- Last completed chunk: Chunk 4, Temporal CLI Worker And Client Path.
-- Next chunk: Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
+- Last completed chunk: Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
+- Next chunk: Chunk 6, Temporal Cancellation, Cleanup, And Failure Semantics.
 - Progress log: `progress.md`.
 
 ## Operating Rules
@@ -91,9 +91,12 @@ Already implemented:
 - `@durafoundry/cli`: local fixture demo that runs through Temporal Client/Worker APIs.
 - `flake.nix`, `.envrc`, and `Justfile`: pinned Nix development shell and local Temporal CLI smoke recipes.
 
+Resolved in this Temporal plan so far:
+
+- Real Temporal Update/Query coverage exists for the v0 control surface.
+
 Remaining gaps:
 
-- Real Temporal Update/Query coverage exists for the happy path, but the full interactive control surface still needs dedicated Temporal integration tests.
 - Cancellation, cleanup, and failure semantics still need hardening against real Temporal cancellation paths.
 - Final Temporal-backed fixture acceptance and hardening-review updates are still pending.
 

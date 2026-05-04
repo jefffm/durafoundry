@@ -311,6 +311,7 @@ export async function executeDagScaffold(
   state: FactoryRunState,
   request: ExecuteDagRequest,
   activities: DagExecutionActivities,
+  control: DagExecutionControl = {},
 ): Promise<DagExecutionResult> {
   if (!state.approvedSnapshot) {
     state.status = 'needs_human';
@@ -328,6 +329,10 @@ export async function executeDagScaffold(
   let activeMerges = 0;
 
   while (state.approvedSnapshot && hasUnfinishedNodes(request.plan, state)) {
+    if (!(await waitIfPaused(state, control))) {
+      break;
+    }
+
     const readyNodes = selectReadyNodes(request.plan, state);
     if (readyNodes.length === 0) {
       state.status = 'needs_human';
@@ -351,6 +356,10 @@ export async function executeDagScaffold(
         ),
       ),
     );
+
+    if (!(await waitIfPaused(state, control))) {
+      break;
+    }
 
     for (const result of nodeBatchResults) {
       nodeResults[result.state.nodeId] = result;
@@ -381,6 +390,9 @@ export async function executeDagScaffold(
     }
 
     for (const result of nodeBatchResults) {
+      if (!(await waitIfPaused(state, control))) {
+        break;
+      }
       activeMerges += 1;
       maxObservedMergeConcurrency = Math.max(maxObservedMergeConcurrency, activeMerges);
       const merge = await mergeReadyNode(state, request, activities, result);
@@ -389,6 +401,10 @@ export async function executeDagScaffold(
       if (merge.cleanup) {
         cleanupResults.push(merge.cleanup);
       }
+    }
+
+    if (state.paused) {
+      break;
     }
 
     milestoneResults.push(
@@ -416,7 +432,7 @@ export async function executeDagScaffold(
     }
   }
 
-  if (state.status !== 'needs_human') {
+  if (state.status !== 'needs_human' && !state.paused) {
     state.status = 'completed';
   }
 
@@ -430,6 +446,10 @@ export async function executeDagScaffold(
     maxObservedActiveHighRiskNodes,
     maxObservedMergeConcurrency,
   };
+}
+
+export interface DagExecutionControl {
+  waitWhilePaused?(state: FactoryRunState): Promise<void>;
 }
 
 export function approvePlanState(
@@ -733,6 +753,20 @@ function applyFollowupDagDraftState(
 
 function hasUnfinishedNodes(plan: PlanDAG, state: FactoryRunState): boolean {
   return plan.nodes.some((node) => state.nodes[node.id]?.status !== 'merged');
+}
+
+async function waitIfPaused(
+  state: FactoryRunState,
+  control: DagExecutionControl,
+): Promise<boolean> {
+  if (!state.paused) {
+    return true;
+  }
+  if (!control.waitWhilePaused) {
+    return false;
+  }
+  await control.waitWhilePaused(state);
+  return !state.paused;
 }
 
 function selectReadyNodes(plan: PlanDAG, state: FactoryRunState): TaskNode[] {

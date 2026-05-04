@@ -15,6 +15,7 @@ import type {
   FactoryRunActivities,
   FactoryRunInput,
   FactoryRunState,
+  FollowupDagDraftResult,
   GateOverrideUpdateInput,
   NodeExecutionActivities,
   NodeExecutionResult,
@@ -25,6 +26,7 @@ import type {
 import type {
   HumanGapRequest,
   HumanGapResult,
+  PlanDAG,
   StateRetryRequest,
   StateRetryResult,
   SkipDelayRequest,
@@ -120,7 +122,13 @@ export async function factoryRunWorkflow(input: FactoryRunInput): Promise<Factor
     skipDelayScaffold(request),
   );
   setHandler(requestFollowupDagUpdate, (request: HumanGapRequest): HumanGapResult =>
-    requestFollowupDagState(state, request),
+    requestFollowupDagState(
+      state,
+      request,
+      draftPlan && state.approvedSnapshot
+        ? createFollowupDagDraft(draftPlan.plan, state, request)
+        : undefined,
+    ),
   );
   setHandler(approveFollowupDagUpdate, (approval: PlanApprovalUpdateInput): PlanDecisionResult =>
     approveFollowupDagState(state, approval),
@@ -155,6 +163,11 @@ export async function factoryRunWorkflow(input: FactoryRunInput): Promise<Factor
       gitAuthor: input.runtime.gitAuthor,
     },
     dagActivities,
+    {
+      waitWhilePaused: async () => {
+        await condition(() => !state.paused);
+      },
+    },
   );
   return dagResult.state;
 }
@@ -173,4 +186,124 @@ export async function dagExecutionWorkflow(
   input: DagExecutionWorkflowInput,
 ): Promise<DagExecutionResult> {
   return executeDagScaffold(input.factoryState, input.request, dagActivities);
+}
+
+function createFollowupDagDraft(
+  parentPlan: PlanDAG,
+  state: FactoryRunState,
+  request: HumanGapRequest,
+): FollowupDagDraftResult {
+  const suffix = safePlanSegment(request.requestId);
+  const nodeId = `followup-${suffix}`;
+  const milestoneId = `followup-milestone-${suffix}`;
+  const createdAt = parentPlan.createdAt;
+  const planUri = `file:///followup-${suffix}.json`;
+  const nodeBodyUri = `file:///followup-${suffix}.md`;
+  const milestoneBodyUri = `file:///followup-milestone-${suffix}.md`;
+  const manifestUri = `file:///followup-${suffix}-snapshot.json`;
+  const plan: PlanDAG = {
+    planId: `followup-plan-${suffix}`,
+    dagId: `followup-dag-${suffix}`,
+    parentDagId: state.approvedSnapshot?.dagId,
+    parentSnapshotId: state.approvedSnapshot?.snapshotId,
+    specId: parentPlan.specId,
+    specVersion: parentPlan.specVersion,
+    createdAt,
+    plannerModel: 'durafoundry-control-update',
+    status: 'proposed',
+    artifactUri: planUri,
+    summary: `Follow-up DAG for ${request.gapReport.gapReportId}`,
+    assumptions: [`Requested by ${request.actor}: ${request.reason}`],
+    milestones: [
+      {
+        id: milestoneId,
+        title: 'Follow-up work',
+        description: request.gapReport.summary,
+        bodyUri: milestoneBodyUri,
+        nodeIds: [nodeId],
+        reviewPolicy: {
+          runBroadReview: true,
+          runBroadJudge: true,
+          autoPlanGaps: true,
+          requireApprovalForGapWork: 'high-risk-only',
+        },
+        acceptanceCriteria: ['Address the reported follow-up gap.'],
+      },
+    ],
+    nodes: [
+      {
+        id: nodeId,
+        milestoneId,
+        title: 'Address follow-up gap',
+        kind: 'code',
+        bodyUri: nodeBodyUri,
+        description: request.gapReport.summary,
+        requirements: request.gapReport.gaps.flatMap((gap) => gap.suggestedTasks),
+        specRequirementIds: request.gapReport.gaps.flatMap((gap) => gap.affectedRequirements),
+        acceptanceCriteria: ['The reported gap is resolved or explicitly accepted.'],
+        verificationCommands: ['verification skipped'],
+        reviewerFocus: ['Confirm the follow-up gap is addressed.'],
+        judgeRubric: ['No unresolved blocking gap remains.'],
+        riskLevel: request.requiresApprovalOverride ? 'high' : 'medium',
+        worktree: {
+          mode: 'per-node',
+          baseRef: parentPlan.mergePolicy.trunkBranch,
+          cleanup: 'after-merge',
+        },
+        maxAttempts: 2,
+      },
+    ],
+    edges: [],
+    globalAcceptanceCriteria: ['Follow-up DAG resolves the gap request.'],
+    parallelism: parentPlan.parallelism,
+    mergePolicy: parentPlan.mergePolicy,
+  };
+
+  return {
+    approvalPolicy: 'always',
+    summary: plan.summary,
+    plan,
+    planRef: {
+      uri: planUri,
+      kind: 'plan-json',
+      sha256: `followup-plan-sha-${suffix}`,
+      createdAt,
+      producer: 'durafoundry-control-update',
+    },
+    snapshotManifest: {
+      snapshotId: `followup-snapshot-${suffix}`,
+      planJson: {
+        uri: planUri,
+        sha256: `followup-plan-sha-${suffix}`,
+        kind: 'plan-json',
+      },
+      nodeBodies: {
+        [nodeId]: {
+          uri: nodeBodyUri,
+          sha256: `followup-node-sha-${suffix}`,
+          kind: 'node-body',
+        },
+      },
+      milestoneBodies: {
+        [milestoneId]: {
+          uri: milestoneBodyUri,
+          sha256: `followup-milestone-sha-${suffix}`,
+          kind: 'milestone-body',
+        },
+      },
+      createdAt,
+    },
+    snapshotManifestRef: {
+      uri: manifestUri,
+      kind: 'plan-snapshot-manifest',
+      sha256: `followup-manifest-sha-${suffix}`,
+      createdAt,
+      producer: 'durafoundry-control-update',
+    },
+  };
+}
+
+function safePlanSegment(value: string): string {
+  const safe = value.replace(/[^a-zA-Z0-9._-]/g, '-');
+  return safe.length > 0 ? safe : 'request';
 }
