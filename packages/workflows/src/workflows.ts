@@ -1,4 +1,5 @@
 import {
+  CancellationScope,
   condition,
   defineQuery,
   defineUpdate,
@@ -58,6 +59,8 @@ const nodeActivities = proxyActivities<NodeExecutionActivities>({
 });
 const dagActivities = proxyActivities<DagExecutionActivities>({
   startToCloseTimeout: '5 minutes',
+  heartbeatTimeout: '5 seconds',
+  retry: { maximumAttempts: 1 },
 });
 
 export const getRunStateQuery = defineQuery<FactoryRunState>('getRunState');
@@ -167,6 +170,7 @@ export async function factoryRunWorkflow(input: FactoryRunInput): Promise<Factor
       waitWhilePaused: async () => {
         await condition(() => !state.paused);
       },
+      runCleanup: (operation) => CancellationScope.nonCancellable(operation),
     },
   );
   return dagResult.state;

@@ -1,5 +1,6 @@
 import type {
   CancelNodeUpdateInput,
+  CleanupNodeWorktreeActivityInput,
   CleanupNodeWorktreeResult,
   DagExecutionActivities,
   DagExecutionResult,
@@ -123,7 +124,8 @@ export async function executeNodeScaffold(
   const allRepairInstructions: RepairInstruction[] = [];
   let pendingRepairInstructions: RepairInstruction[] = [];
 
-  for (let attemptNumber = 1; attemptNumber <= request.node.maxAttempts; attemptNumber += 1) {
+  try {
+    for (let attemptNumber = 1; attemptNumber <= request.node.maxAttempts; attemptNumber += 1) {
     const attemptId = `${request.node.id}-attempt-${attemptNumber}`;
     executionState.status = pendingRepairInstructions.length > 0 ? 'repairing' : 'running';
     executionState.activeAttemptId = attemptId;
@@ -292,19 +294,31 @@ export async function executeNodeScaffold(
       [request.node.id]: result,
     };
     updateNodeSummary(state, executionState);
+      return result;
+    }
+
+    executionState.status = 'needs_human';
+    executionState.activeAttemptId = undefined;
+    executionState.failureReason = `Node ${request.node.id} exhausted ${request.node.maxAttempts} attempts.`;
+    const result = toNodeExecutionResult(executionState, attempts, allRepairInstructions);
+    state.nodeRuns = {
+      ...(state.nodeRuns ?? {}),
+      [request.node.id]: result,
+    };
+    updateNodeSummary(state, executionState);
+    return result;
+  } catch (error) {
+    executionState.status = 'needs_human';
+    executionState.activeAttemptId = undefined;
+    executionState.failureReason = `Node ${request.node.id} failed after worktree creation: ${errorMessage(error)}`;
+    const result = toNodeExecutionResult(executionState, attempts, allRepairInstructions);
+    state.nodeRuns = {
+      ...(state.nodeRuns ?? {}),
+      [request.node.id]: result,
+    };
+    updateNodeSummary(state, executionState);
     return result;
   }
-
-  executionState.status = 'needs_human';
-  executionState.activeAttemptId = undefined;
-  executionState.failureReason = `Node ${request.node.id} exhausted ${request.node.maxAttempts} attempts.`;
-  const result = toNodeExecutionResult(executionState, attempts, allRepairInstructions);
-  state.nodeRuns = {
-    ...(state.nodeRuns ?? {}),
-    [request.node.id]: result,
-  };
-  updateNodeSummary(state, executionState);
-  return result;
 }
 
 export async function executeDagScaffold(
@@ -364,18 +378,26 @@ export async function executeDagScaffold(
     for (const result of nodeBatchResults) {
       nodeResults[result.state.nodeId] = result;
       if (result.state.status !== 'ready_to_merge') {
+        let cleanup: CleanupNodeWorktreeResult | undefined;
         if (result.state.worktreePath && result.state.branchName) {
-          const cleanup = await activities.cleanupNodeWorktree({
-            repoPath: request.repoPath,
-            worktreePath: result.state.worktreePath,
-            runId: state.runId,
-            nodeId: result.state.nodeId,
-            branchName: result.state.branchName,
-          });
+          cleanup = await cleanupNodeWorktreeSafely(
+            activities,
+            {
+              repoPath: request.repoPath,
+              worktreePath: result.state.worktreePath,
+              runId: state.runId,
+              nodeId: result.state.nodeId,
+              branchName: result.state.branchName,
+            },
+            control,
+          );
           cleanupResults.push(cleanup);
         }
         state.status = 'needs_human';
-        state.latestFailureReason = result.state.failureReason ?? `Node ${result.state.nodeId} did not merge.`;
+        state.latestFailureReason = withCleanupFailure(
+          result.state.failureReason ?? `Node ${result.state.nodeId} did not merge.`,
+          cleanup,
+        );
         return {
           state,
           nodeResults,
@@ -395,11 +417,62 @@ export async function executeDagScaffold(
       }
       activeMerges += 1;
       maxObservedMergeConcurrency = Math.max(maxObservedMergeConcurrency, activeMerges);
-      const merge = await mergeReadyNode(state, request, activities, result);
+      let merge: MergedNodeResult;
+      try {
+        merge = await mergeReadyNode(state, request, activities, result, control);
+      } catch (error) {
+        activeMerges -= 1;
+        const cleanup =
+          result.state.worktreePath && result.state.branchName
+            ? await cleanupNodeWorktreeSafely(
+                activities,
+                {
+                  repoPath: request.repoPath,
+                  worktreePath: result.state.worktreePath,
+                  runId: state.runId,
+                  nodeId: result.state.nodeId,
+                  branchName: result.state.branchName,
+                },
+                control,
+              )
+            : undefined;
+        if (cleanup) {
+          cleanupResults.push(cleanup);
+        }
+        state.status = 'needs_human';
+        state.latestFailureReason = withCleanupFailure(
+          `Merge failed for node ${result.state.nodeId}: ${errorMessage(error)}`,
+          cleanup,
+        );
+        return {
+          state,
+          nodeResults,
+          mergedNodes,
+          cleanupResults,
+          milestoneResults,
+          maxObservedActiveNodes,
+          maxObservedActiveHighRiskNodes,
+          maxObservedMergeConcurrency,
+        };
+      }
       activeMerges -= 1;
       mergedNodes.push(merge);
       if (merge.cleanup) {
         cleanupResults.push(merge.cleanup);
+        if (merge.cleanup.failureReason) {
+          state.status = 'needs_human';
+          state.latestFailureReason = `Cleanup failed after merging node ${result.state.nodeId}: ${merge.cleanup.failureReason}`;
+          return {
+            state,
+            nodeResults,
+            mergedNodes,
+            cleanupResults,
+            milestoneResults,
+            maxObservedActiveNodes,
+            maxObservedActiveHighRiskNodes,
+            maxObservedMergeConcurrency,
+          };
+        }
       }
     }
 
@@ -450,6 +523,7 @@ export async function executeDagScaffold(
 
 export interface DagExecutionControl {
   waitWhilePaused?(state: FactoryRunState): Promise<void>;
+  runCleanup?<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 export function approvePlanState(
@@ -625,6 +699,14 @@ function rejectDecision(state: FactoryRunState, rejectedReason: string): PlanDec
     status: state.status,
     rejectedReason,
   };
+}
+
+function withCleanupFailure(reason: string, cleanup?: CleanupNodeWorktreeResult): string {
+  return cleanup?.failureReason ? `${reason}; cleanup failed: ${cleanup.failureReason}` : reason;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function validateDraftPlanResult(draft: DraftPlanResult): void {
@@ -839,6 +921,7 @@ async function mergeReadyNode(
   request: ExecuteDagRequest,
   activities: DagExecutionActivities,
   result: NodeExecutionResult,
+  control: DagExecutionControl,
 ): Promise<MergedNodeResult> {
   const finalCommitSha = result.history.finalGatedCommitSha;
   if (!result.state.branchName || !result.state.worktreePath || !finalCommitSha) {
@@ -864,19 +947,44 @@ async function mergeReadyNode(
     status: 'merged',
   });
 
-  const cleanup = await activities.cleanupNodeWorktree({
-    repoPath: request.repoPath,
-    worktreePath: result.state.worktreePath,
-    runId: state.runId,
-    nodeId: result.state.nodeId,
-    branchName: result.state.branchName,
-  });
+  const cleanup = await cleanupNodeWorktreeSafely(
+    activities,
+    {
+      repoPath: request.repoPath,
+      worktreePath: result.state.worktreePath,
+      runId: state.runId,
+      nodeId: result.state.nodeId,
+      branchName: result.state.branchName,
+    },
+    control,
+  );
 
   return {
     nodeId: result.state.nodeId,
     merge,
     cleanup,
   };
+}
+
+async function cleanupNodeWorktreeSafely(
+  activities: DagExecutionActivities,
+  input: CleanupNodeWorktreeActivityInput,
+  control: DagExecutionControl,
+): Promise<CleanupNodeWorktreeResult> {
+  const runCleanup = control.runCleanup ?? ((operation) => operation());
+  try {
+    return await runCleanup(() => activities.cleanupNodeWorktree(input));
+  } catch (error) {
+    return {
+      repoPath: input.repoPath,
+      worktreePath: input.worktreePath,
+      branchName: input.branchName ?? '',
+      removedWorktree: false,
+      removedBranch: false,
+      commandsRun: [],
+      failureReason: errorMessage(error),
+    };
+  }
 }
 
 async function runCompletedMilestoneGates(

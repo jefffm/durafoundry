@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { Context } from '@temporalio/activity';
 import type {
   CommandResult,
   DagEdge,
@@ -299,6 +300,103 @@ test('temporal execution controls pause scheduling and expose human follow-up st
   }
 });
 
+test('temporal cancellation after worktree creation schedules cleanup', async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'durafoundry-temporal-cancel-cleanup-'));
+  const input = factoryInput('run-temporal-cancel-cleanup', artifactRoot);
+  const cleanupCalls: NodeId[] = [];
+  const harness = await createTemporalWorkerClientHarness({
+    activities: temporalSmokeActivities({
+      cancellableCoderNodeId: 'node-1',
+      cleanupCalls,
+    }),
+    taskQueuePrefix: 'durafoundry-temporal-cancel-cleanup',
+  });
+
+  try {
+    await harness.runUntil(async () => {
+      const handle = await startFactoryRun(harness, input, 'cancel-cleanup');
+      const waitingState = await waitForPlanApproval(() => handle.query(getRunStateQuery));
+      await handle.executeUpdate(approvePlanUpdate, {
+        args: [approvalFor(waitingState, 'operator approve')],
+      });
+      const runningState = await waitForNodeStatus(
+        () => handle.query(getRunStateQuery),
+        'node-1',
+        'running',
+      );
+      assert.equal(runningState.nodes['node-1']?.status, 'running');
+
+      await handle.cancel();
+      const finalState = await handle.result();
+      assert.equal(finalState.status, 'needs_human');
+      assert.equal(finalState.nodes['node-1']?.status, 'needs_human');
+      assert.match(finalState.latestFailureReason ?? '', /cancel/i);
+      assert.deepEqual(cleanupCalls, ['node-1']);
+    });
+  } finally {
+    await harness.teardown();
+  }
+});
+
+test('temporal merge failure is queryable and does not complete the run', async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'durafoundry-temporal-failure-'));
+  const input = factoryInput('run-temporal-failure', artifactRoot);
+  const mergeCleanupCalls: NodeId[] = [];
+  const harness = await createTemporalWorkerClientHarness({
+    activities: temporalSmokeActivities({
+      mergeFailureNodeId: 'node-1',
+      cleanupCalls: mergeCleanupCalls,
+    }),
+    taskQueuePrefix: 'durafoundry-temporal-merge-failure',
+  });
+
+  try {
+    await harness.runUntil(async () => {
+      const mergeHandle = await startFactoryRun(harness, input, 'merge-failure');
+      const waitingState = await waitForPlanApproval(() => mergeHandle.query(getRunStateQuery));
+      await mergeHandle.executeUpdate(approvePlanUpdate, {
+        args: [approvalFor(waitingState, 'operator approve')],
+      });
+      const mergeFailure = await mergeHandle.result();
+      assert.equal(mergeFailure.status, 'needs_human');
+      assert.match(mergeFailure.latestFailureReason ?? '', /Merge failed for node node-1/);
+      assert.deepEqual(mergeCleanupCalls, ['node-1']);
+    });
+  } finally {
+    await harness.teardown();
+  }
+});
+
+test('temporal cleanup failure is queryable and does not complete the run', async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'durafoundry-temporal-cleanup-failure-'));
+  const input = factoryInput('run-temporal-cleanup-failure', artifactRoot);
+  const cleanupCalls: NodeId[] = [];
+  const harness = await createTemporalWorkerClientHarness({
+    activities: temporalSmokeActivities({
+      cleanupFailureNodeId: 'node-1',
+      cleanupCalls,
+    }),
+    taskQueuePrefix: 'durafoundry-temporal-cleanup-failure',
+  });
+
+  try {
+    await harness.runUntil(async () => {
+      const handle = await startFactoryRun(harness, input, 'cleanup-failure');
+      const waitingState = await waitForPlanApproval(() => handle.query(getRunStateQuery));
+      await handle.executeUpdate(approvePlanUpdate, {
+        args: [approvalFor(waitingState, 'operator approve')],
+      });
+      const cleanupFailure = await handle.result();
+      assert.equal(cleanupFailure.status, 'needs_human');
+      assert.match(cleanupFailure.latestFailureReason ?? '', /Cleanup failed after merging node node-1/);
+      assert.deepEqual(cleanupCalls, ['node-1']);
+      assert.match((await handle.query(getRunStateQuery)).latestFailureReason ?? '', /cleanup failed/i);
+    });
+  } finally {
+    await harness.teardown();
+  }
+});
+
 async function waitForPlanApproval(
   queryState: () => Promise<FactoryRunState>,
 ) {
@@ -324,12 +422,30 @@ async function waitForStatus(
   return latestState;
 }
 
+async function waitForNodeStatus(
+  queryState: () => Promise<FactoryRunState>,
+  nodeId: NodeId,
+  status: NonNullable<FactoryRunState['nodes'][NodeId]>['status'],
+) {
+  const deadline = Date.now() + 10_000;
+  let latestState = await queryState();
+  while (latestState.nodes[nodeId]?.status !== status && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    latestState = await queryState();
+  }
+  return latestState;
+}
+
 function temporalSmokeActivities(
   options: {
     delayWorktreeMs?: number;
     nodeIds?: NodeId[];
     edges?: DagEdge[];
     maxActiveNodes?: number;
+    cancellableCoderNodeId?: NodeId;
+    mergeFailureNodeId?: NodeId;
+    cleanupFailureNodeId?: NodeId;
+    cleanupCalls?: NodeId[];
   } = {},
 ): FactoryRunActivities & DagExecutionActivities {
   return {
@@ -455,6 +571,13 @@ function temporalSmokeActivities(
       };
     },
     async runCoder(request) {
+      if (options.cancellableCoderNodeId === request.nodeId) {
+        const context = Context.current();
+        for (;;) {
+          context.heartbeat({ nodeId: request.nodeId });
+          await context.sleep(100);
+        }
+      }
       return fakeAttempt(request.nodeId, request.attemptId, request.planSnapshotId);
     },
     async runVerification(request) {
@@ -490,17 +613,26 @@ function temporalSmokeActivities(
       };
     },
     async mergeNodeCommit(input) {
+      const nodeId = nodeIdFromBranch(input.branchName);
+      if (options.mergeFailureNodeId === nodeId) {
+        throw new Error(`simulated merge failure for ${nodeId}`);
+      }
       return {
         repoPath: input.repoPath,
         trunkBranch: input.trunkBranch,
         branchName: input.branchName,
         mergedCommitSha: input.expectedCommitSha ?? 'commit-sha',
         trunkHeadBefore: 'before',
-        trunkHeadAfter: `merge-${input.branchName.split('/').at(-1) ?? 'node'}`,
+        trunkHeadAfter: `merge-${nodeId}`,
         commandsRun: [commandResult('git merge')],
       };
     },
     async cleanupNodeWorktree(input) {
+      const nodeId = input.nodeId ?? nodeIdFromBranch(input.branchName ?? 'branch');
+      options.cleanupCalls?.push(nodeId);
+      if (options.cleanupFailureNodeId === nodeId) {
+        throw new Error(`simulated cleanup failure for ${nodeId}`);
+      }
       return {
         repoPath: input.repoPath,
         worktreePath: input.worktreePath,
@@ -531,6 +663,10 @@ function temporalSmokeActivities(
       };
     },
   };
+}
+
+function nodeIdFromBranch(branchName: string): NodeId {
+  return branchName.split('/').at(-1) ?? branchName;
 }
 
 function factoryInput(runId: string, artifactRoot: string): FactoryRunInput {

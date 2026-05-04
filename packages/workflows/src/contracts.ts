@@ -327,6 +327,7 @@ export interface CleanupNodeWorktreeResult {
   removedWorktree: boolean;
   removedBranch: boolean;
   commandsRun: CommandResult[];
+  failureReason?: string;
 }
 
 export interface RunBroadGateActivityInput {

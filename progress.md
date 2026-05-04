@@ -5,12 +5,45 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
-- Next chunk: Temporal V0 Chunk 6, Temporal Cancellation, Cleanup, And Failure Semantics.
+- Last completed chunk: Temporal V0 Chunk 6, Temporal Cancellation, Cleanup, And Failure Semantics.
+- Next chunk: Temporal V0 Chunk 7, Temporal Fixture Acceptance. Stop before starting because this is a human review gate.
 - Current branch: `main`.
 - Last validation date: 2026-05-04.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 6: Temporal Cancellation, Cleanup, And Failure Semantics
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added real Temporal integration coverage that cancels a run after `node-1` reaches `running` and asserts the workflow returns `needs_human`, records the node as `needs_human`, surfaces a cancellation failure reason, and schedules cleanup for the created worktree.
+- Added real Temporal integration coverage that simulates `mergeNodeCommit` failure and asserts the run does not complete, returns `needs_human`, records a queryable merge failure reason, and calls cleanup for the node worktree.
+- Added real Temporal integration coverage that simulates `cleanupNodeWorktree` failure and asserts the run does not complete, returns `needs_human`, and keeps the cleanup failure queryable in workflow state.
+- `CleanupNodeWorktreeResult` now carries an optional `failureReason`, so cleanup failure is recorded instead of swallowed.
+- DAG cleanup runs through a non-cancellable Temporal scope in `factoryRunWorkflow`, so cancellation still gives cleanup a chance to execute.
+- The DAG Activity retry policy now uses `maximumAttempts: 1` for v0 so merge and cleanup failures surface promptly as structured workflow state instead of retrying until the run is effectively stuck.
+- Existing git Activity coverage proves non-factory cleanup is refused by `cleanup refuses unmarked worktree paths` and `cleanup refuses mismatched factory markers and leaves worktree intact`.
+
+Validation evidence:
+
+- `nix develop -c npm run typecheck --workspace @durafoundry/workflows` passed.
+- `nix develop -c npm test --workspace @durafoundry/workflows -- --test-name-pattern "cancel|cleanup|failure|merge|temporal"` passed.
+- `nix develop -c npm run typecheck --workspaces --if-present` passed.
+- `nix develop -c npm test --workspaces --if-present` passed.
+- `nix develop -c npm audit` passed with 0 vulnerabilities.
+- `nix develop -c npm run ubs:diff` passed with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: Temporal's default Activity retry policy caused simulated merge failure to retry repeatedly instead of surfacing as structured run state in a useful v0 timeframe.
+- Fix: set the DAG Activity retry policy to `maximumAttempts: 1`, then verified merge and cleanup failures return `needs_human` with queryable reasons.
+- Finding: non-ready node cleanup failure reporting could accidentally read the latest cleanup result instead of the cleanup result for the failing node.
+- Fix: scoped the cleanup result to the failing node before composing `latestFailureReason`.
+- Finding: the cancellation test waited for `running` but did not directly assert the returned state reached that status before cancelling.
+- Fix: asserted `node-1` is `running` immediately before cancellation.
 
 ### Temporal V0 Chunk 5: Temporal Updates, Queries, Pause, And Human Control
 
