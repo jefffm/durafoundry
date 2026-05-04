@@ -22,17 +22,41 @@ DuraFoundry turns approved software specifications into structured execution DAG
 
 ## CLI Demo
 
-Run the v0 fixture demo from this repository:
+Run the v0 fixture demo from this repository against a local Temporal Server.
+In one shell:
 
 ```bash
-npm run build --workspace @durafoundry/cli
-node apps/cli/dist/index.js run --spec docs/SPEC.md --fixture-repo --artifact-root .durafoundry
+nix develop
+just temporal-dev
 ```
 
-The CLI prints one JSON object with the run id, workflow id, artifact root,
-generated fixture repository path, node commit SHAs, merge commit SHAs, and
-final status. The `--fixture-repo` flag is required in v0 so the demo creates a
-throwaway target under the artifact root instead of mutating this checkout.
+In a second shell:
+
+```bash
+nix develop
+npm run build --workspace @durafoundry/cli
+node apps/cli/dist/index.js run \
+  --spec docs/SPEC.md \
+  --fixture-repo \
+  --artifact-root .durafoundry \
+  --start-worker \
+  --auto-approve \
+  --preserve-fixture
+```
+
+The CLI uses Temporal SDK Client and Worker APIs; it does not fall back to the
+deterministic scaffold when Temporal is unavailable. `--temporal-address`
+defaults to `TEMPORAL_ADDRESS` or `localhost:7233`, and `--task-queue` can be
+provided to target an existing Worker. `--start-worker` starts the fixture
+Worker in the CLI process for the local v0 demo. `--auto-approve` submits the
+plan approval through a Temporal Update.
+
+The CLI prints one JSON object with the DuraFoundry run id, Temporal run id,
+workflow id, task queue, Temporal address, artifact root, generated fixture
+repository path, plan id, DAG id, snapshot id, node commit SHAs, merge commit
+SHAs, and final status. The `--fixture-repo` flag is required in v0 so the demo
+creates a throwaway target under the artifact root instead of mutating this
+checkout.
 
 ## Development Shell
 
@@ -55,9 +79,9 @@ just temporal-dev
 ```
 
 `just smoke-temporal-cli` starts an isolated local Temporal dev server with
-`temporal server start-dev`, waits until it is healthy, probes the CLI, and
-then shuts the server down. `just temporal-dev` starts a long-running local
-Temporal dev server at `127.0.0.1:7233` with the UI at
+`temporal server start-dev`, waits until it is healthy, runs the fixture CLI
+through Temporal, and then shuts the server down. `just temporal-dev` starts a
+long-running local Temporal dev server at `127.0.0.1:7233` with the UI at
 `http://127.0.0.1:8233`.
 
 ## Quality Checks

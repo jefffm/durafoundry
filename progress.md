@@ -5,12 +5,51 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 3, Activity Registration For Fixture Runtime.
-- Next chunk: Temporal V0 Chunk 4, Temporal CLI Worker And Client Path. Human review gate before starting.
+- Last completed chunk: Temporal V0 Chunk 4, Temporal CLI Worker And Client Path.
+- Next chunk: Temporal V0 Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
 - Current branch: `main`.
-- Last validation date: 2026-05-03.
+- Last validation date: 2026-05-04.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 4: Temporal CLI Worker And Client Path
+
+Status: complete.
+
+Acceptance evidence:
+
+- Replaced the CLI's direct deterministic scaffold path with Temporal SDK Client/Worker execution.
+- The CLI now creates a fixture repo, starts `FactoryRunWorkflow`, waits for queryable plan approval state, sends `approvePlan` through a Temporal Update, awaits the workflow result, and prints final JSON.
+- Added CLI flags for `--temporal-address`, `--task-queue`, `--auto-approve`, `--start-worker`, `--allow-needs-human`, and `--preserve-fixture`.
+- Temporal address defaults to `TEMPORAL_ADDRESS` or `localhost:7233`.
+- The in-process Worker path registers the reusable fixture Activity map, so fake planner/agent gates and real git worktree/commit/merge/cleanup run through Temporal Activity proxies.
+- The CLI fails clearly when Temporal is unavailable and does not silently fall back to scaffold execution.
+- CLI JSON output includes DuraFoundry run id, Temporal run id, workflow id, task queue, Temporal address, artifact root, fixture repo path, plan id, DAG id, snapshot id, node commits, merge commits, and final status.
+- CLI tests no longer assert direct scaffold execution, and the old CLI direct-scaffold e2e test file was removed.
+- Added a child-process CLI test that starts a real Temporal test environment, runs the CLI with `--start-worker --auto-approve`, approves through Temporal, and completes.
+- Added CLI tests for missing `--fixture-repo`, unknown flags, unavailable Temporal, and target safety against the implementation checkout.
+- Updated `README.md` with local Temporal and fixture CLI instructions.
+- Updated `just smoke-temporal-cli` so it starts a local Temporal dev server and runs the actual DuraFoundry fixture CLI through Temporal.
+
+Validation evidence:
+
+- `nix develop -c npm run typecheck --workspace @durafoundry/cli` passed.
+- `nix develop -c npm test --workspace @durafoundry/cli` passed.
+- `nix develop -c just smoke-temporal-cli` passed.
+- `nix develop -c npm run typecheck --workspaces --if-present` passed.
+- `nix develop -c npm test --workspaces --if-present` passed.
+- `nix develop -c npm audit` passed with 0 vulnerabilities.
+- `nix develop -c npm run ubs:diff` passed with 0 warnings and 0 critical issues.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the external-worker CLI path opened a Temporal Client connection without closing it.
+- Fix: wrapped the external-worker execution path in a `finally` block that closes the connection.
+- Finding: the CLI package still had direct fake-agent and git Activity dependencies after the scaffold path was removed.
+- Fix: removed those direct CLI dependencies; runtime Activity registration now comes through `@durafoundry/workflows`.
+- Finding: the smoke recipe documentation said it probed the CLI, but the recipe only checked Temporal health.
+- Fix: changed `just smoke-temporal-cli` to run the fixture CLI through Temporal and assert `finalStatus === "completed"`.
 
 ### Temporal V0 Chunk 3: Activity Registration For Fixture Runtime
 

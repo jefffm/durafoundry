@@ -15,8 +15,8 @@ Do not add Flue-backed agents, dashboard/API work, protected repository support,
 
 ## Execution Status
 
-- Last completed chunk: Chunk 3, Activity Registration For Fixture Runtime.
-- Next chunk: Chunk 4, Temporal CLI Worker And Client Path. Human review gate before starting.
+- Last completed chunk: Chunk 4, Temporal CLI Worker And Client Path.
+- Next chunk: Chunk 5, Temporal Updates, Queries, Pause, And Human Control.
 - Progress log: `progress.md`.
 
 ## Operating Rules
@@ -87,16 +87,15 @@ Already implemented:
 - `@durafoundry/fixture-repo`: generated disposable git repository.
 - `@durafoundry/git-activities`: real git worktree, commit, merge, and cleanup functions.
 - `@durafoundry/fake-agent-activities`: fake planner, coder, reviewer, judge, broad gates, and gap planner.
-- `@durafoundry/workflows`: deterministic scaffold plus initial Temporal workflow wrappers.
-- `@durafoundry/cli`: local fixture demo that currently runs the deterministic scaffold directly.
+- `@durafoundry/workflows`: deterministic scaffold plus Temporal workflow wrappers and fixture Activity registration.
+- `@durafoundry/cli`: local fixture demo that runs through Temporal Client/Worker APIs.
 - `flake.nix`, `.envrc`, and `Justfile`: pinned Nix development shell and local Temporal CLI smoke recipes.
 
-Known gap:
+Remaining gaps:
 
-- The current CLI does not connect to Temporal.
-- There is no Worker process.
-- There is no Temporal Client startup path.
-- `FactoryRunWorkflow` currently waits for plan approval and returns; it does not execute the approved DAG through Temporal.
+- Real Temporal Update/Query coverage exists for the happy path, but the full interactive control surface still needs dedicated Temporal integration tests.
+- Cancellation, cleanup, and failure semantics still need hardening against real Temporal cancellation paths.
+- Final Temporal-backed fixture acceptance and hardening-review updates are still pending.
 
 Baseline validation:
 

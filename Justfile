@@ -25,7 +25,7 @@ validate:
     npm audit
     npm run ubs:diff
 
-# Start a local Temporal dev server, verify CLI connectivity, and stop it.
+# Start a local Temporal dev server, run the fixture CLI through Temporal, and stop it.
 smoke-temporal-cli:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -79,7 +79,22 @@ smoke-temporal-cli:
 
     temporal operator cluster health --address "$address" --namespace default
     temporal workflow list --address "$address" --namespace default --limit 1 >/dev/null
-    echo "Temporal CLI smoke test passed; UI was available on http://127.0.0.1:$ui_port while the test was running"
+
+    npm run build --workspace @durafoundry/cli >/dev/null
+    output="$(node apps/cli/dist/index.js run \
+      --spec docs/SPEC.md \
+      --fixture-repo \
+      --artifact-root "$tmpdir/artifacts" \
+      --temporal-address "$address" \
+      --start-worker \
+      --auto-approve)"
+    status="$(jq -r '.finalStatus' <<<"$output")"
+    if [[ "$status" != "completed" ]]; then
+      echo "DuraFoundry CLI smoke run did not complete: $output" >&2
+      exit 1
+    fi
+    echo "$output" | jq '{runId, temporalRunId, workflowId, taskQueue, temporalAddress, finalStatus}'
+    echo "Temporal fixture CLI smoke test passed; UI was available on http://127.0.0.1:$ui_port while the test was running"
 
 # Run a long-lived local Temporal dev server until Ctrl-C.
 temporal-dev:
