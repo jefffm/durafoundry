@@ -11,6 +11,7 @@ import {
   createFixtureActivityMap,
   factoryRunWorkflow,
   getRunStateQuery,
+  type FixtureActivityMapOptions,
   type FactoryRunInput,
   type FactoryRunState,
 } from '@durafoundry/workflows';
@@ -48,6 +49,11 @@ interface ParsedRunArgs {
   preserveFixture: boolean;
 }
 
+export interface CliRunOptions {
+  fixtureActivities?: FixtureActivityMapOptions;
+  onStateSample?(state: FactoryRunState): void | Promise<void>;
+}
+
 interface TemporalRunContext {
   input: FactoryRunInput;
   workflowId: string;
@@ -60,6 +66,13 @@ const planApprovalPollMs = 200;
 const planApprovalTimeoutMs = 15_000;
 
 export async function runCli(argv: string[]): Promise<CliRunOutput> {
+  return runCliWithOptions(argv);
+}
+
+export async function runCliWithOptions(
+  argv: string[],
+  options: CliRunOptions = {},
+): Promise<CliRunOutput> {
   const args = parseRunArgs(argv);
   const artifactRoot = resolve(args.artifactRoot);
   const specPath = resolve(args.specPath);
@@ -106,8 +119,8 @@ export async function runCli(argv: string[]): Promise<CliRunOutput> {
     };
 
     const output = args.startWorker
-      ? await runWithInProcessWorker(context)
-      : await runWithExternalWorker(context);
+      ? await runWithInProcessWorker(context, options)
+      : await runWithExternalWorker(context, options);
     if (
       output.finalStatus !== 'completed' &&
       !(args.allowNeedsHuman && output.finalStatus === 'needs_human')
@@ -122,7 +135,10 @@ export async function runCli(argv: string[]): Promise<CliRunOutput> {
   }
 }
 
-async function runWithInProcessWorker(context: TemporalRunContext): Promise<CliRunOutput> {
+async function runWithInProcessWorker(
+  context: TemporalRunContext,
+  options: CliRunOptions,
+): Promise<CliRunOutput> {
   let connection: NativeConnection | undefined;
   try {
     connection = await connectNativeTemporal(context.temporalAddress);
@@ -136,10 +152,10 @@ async function runWithInProcessWorker(context: TemporalRunContext): Promise<CliR
       namespace: 'default',
       taskQueue: context.taskQueue,
       workflowsPath: workflowsPathFromCliDist(),
-      activities: createFixtureActivityMap(),
+      activities: createFixtureActivityMap(options.fixtureActivities),
     });
     const client = new Client({ connection, namespace: 'default' });
-    return await worker.runUntil(() => runWorkflowWithClient(client, context));
+    return await worker.runUntil(() => runWorkflowWithClient(client, context, options));
   } catch (cause) {
     throw new Error(`Unable to start or run Temporal worker at ${context.temporalAddress}.`, {
       cause,
@@ -149,7 +165,10 @@ async function runWithInProcessWorker(context: TemporalRunContext): Promise<CliR
   }
 }
 
-async function runWithExternalWorker(context: TemporalRunContext): Promise<CliRunOutput> {
+async function runWithExternalWorker(
+  context: TemporalRunContext,
+  options: CliRunOptions,
+): Promise<CliRunOutput> {
   let connection: Connection | undefined;
   try {
     connection = await Connection.connect({
@@ -162,7 +181,7 @@ async function runWithExternalWorker(context: TemporalRunContext): Promise<CliRu
 
   try {
     const client = new Client({ connection, namespace: 'default' });
-    return await runWorkflowWithClient(client, context);
+    return await runWorkflowWithClient(client, context, options);
   } finally {
     await connection.close();
   }
@@ -171,13 +190,14 @@ async function runWithExternalWorker(context: TemporalRunContext): Promise<CliRu
 async function runWorkflowWithClient(
   client: Client,
   context: TemporalRunContext,
+  options: CliRunOptions,
 ): Promise<CliRunOutput> {
   const handle = await client.workflow.start(factoryRunWorkflow, {
     args: [context.input],
     taskQueue: context.taskQueue,
     workflowId: context.workflowId,
   });
-  const approvedPlan = await waitForPlanApprovalState(handle);
+  const approvedPlan = await waitForPlanApprovalState(handle, options);
   await handle.executeUpdate(approvePlanUpdate, {
     args: [
       {
@@ -188,12 +208,14 @@ async function runWorkflowWithClient(
       },
     ],
   });
-  const finalState = await handle.result();
+  await sampleWorkflowState(handle, options);
+  const finalState = await waitForWorkflowResult(handle, options);
   return toCliOutput(context, handle.firstExecutionRunId, finalState);
 }
 
 async function waitForPlanApprovalState(
   handle: WorkflowHandleWithStartDetails<typeof factoryRunWorkflow>,
+  options: CliRunOptions,
 ): Promise<FactoryRunState & { plan: NonNullable<FactoryRunState['plan']> }> {
   const deadline = Date.now() + planApprovalTimeoutMs;
   let lastError: unknown;
@@ -201,6 +223,7 @@ async function waitForPlanApprovalState(
     let state: FactoryRunState | undefined;
     try {
       state = await handle.query(getRunStateQuery);
+      await options.onStateSample?.(state);
     } catch (error) {
       lastError = error;
     }
@@ -220,6 +243,36 @@ async function waitForPlanApprovalState(
   throw new Error('Timed out waiting for Temporal workflow plan approval state.', {
     cause: lastError,
   });
+}
+
+async function waitForWorkflowResult(
+  handle: WorkflowHandleWithStartDetails<typeof factoryRunWorkflow>,
+  options: CliRunOptions,
+): Promise<FactoryRunState> {
+  let completed = false;
+  const result = handle.result().finally(() => {
+    completed = true;
+  });
+
+  while (!completed) {
+    await Promise.race([sleep(100), result.then(() => undefined)]);
+    if (!completed) {
+      await sampleWorkflowState(handle, options);
+    }
+  }
+
+  return result;
+}
+
+async function sampleWorkflowState(
+  handle: WorkflowHandleWithStartDetails<typeof factoryRunWorkflow>,
+  options: CliRunOptions,
+): Promise<void> {
+  try {
+    await options.onStateSample?.(await handle.query(getRunStateQuery));
+  } catch {
+    // Query sampling is best-effort; workflow completion can race with the sample.
+  }
 }
 
 function toCliOutput(

@@ -58,6 +58,17 @@ SHAs, and final status. The `--fixture-repo` flag is required in v0 so the demo
 creates a throwaway target under the artifact root instead of mutating this
 checkout.
 
+The acceptance coverage for this path is:
+
+```bash
+npm test --workspace @durafoundry/cli -- --test-name-pattern "temporal|acceptance|fixture"
+```
+
+That test uses a real Temporal test server, starts a fixture Worker, samples
+workflow Query state, submits approval through an Update, asserts repair,
+serial merge, milestone gates, cleanup, artifact contents, and validates the
+final CLI JSON shape.
+
 ## Development Shell
 
 The canonical development environment is the pinned Nix flake:

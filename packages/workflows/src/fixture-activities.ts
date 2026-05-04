@@ -7,17 +7,26 @@ import {
   runFakeReviewer,
 } from '@durafoundry/fake-agent-activities';
 import {
-  cleanupNodeWorktree,
+  cleanupNodeWorktree as runCleanupNodeWorktree,
   commitNodeChanges,
   createNodeWorktree,
-  mergeNodeCommit,
+  mergeNodeCommit as runMergeNodeCommit,
 } from '@durafoundry/git-activities';
 
 import type {
+  BroadJudgeGateResult,
+  BroadReviewGateResult,
+  CleanupNodeWorktreeActivityInput,
+  CleanupNodeWorktreeResult,
   DagExecutionActivities,
   FactoryRunActivities,
   FactoryRunInput,
+  MergeNodeCommitActivityInput,
+  MergeNodeCommitResult,
+  NodeReviewGateResult,
   NodeVerificationGateResult,
+  RunBroadGateActivityInput,
+  RunGateActivityInput,
 } from './contracts.js';
 
 export interface FixtureActivityMapOptions {
@@ -26,9 +35,31 @@ export interface FixtureActivityMapOptions {
   failFirstJudgeAttempt?: boolean;
   emitBroadReviewGap?: boolean;
   emitBroadJudgeGap?: boolean;
+  observer?: FixtureActivityObserver;
 }
 
 export type FixtureActivityMap = FactoryRunActivities & DagExecutionActivities;
+
+export interface FixtureActivityObserver {
+  onReviewResult?(input: RunGateActivityInput, result: NodeReviewGateResult): void | Promise<void>;
+  onMergeNodeCommitStart?(input: MergeNodeCommitActivityInput): void | Promise<void>;
+  onMergeNodeCommit?(
+    input: MergeNodeCommitActivityInput,
+    result: MergeNodeCommitResult,
+  ): void | Promise<void>;
+  onCleanupNodeWorktree?(
+    input: CleanupNodeWorktreeActivityInput,
+    result: CleanupNodeWorktreeResult,
+  ): void | Promise<void>;
+  onBroadReviewResult?(
+    input: RunBroadGateActivityInput,
+    result: BroadReviewGateResult,
+  ): void | Promise<void>;
+  onBroadJudgeResult?(
+    input: RunBroadGateActivityInput,
+    result: BroadJudgeGateResult,
+  ): void | Promise<void>;
+}
 
 export function createFixtureActivityMap(
   options: FixtureActivityMapOptions = {},
@@ -67,12 +98,14 @@ export function createFixtureActivityMap(
     },
     commitNodeChanges,
     async runReviewer(input) {
-      return runFakeReviewer({
+      const result = runFakeReviewer({
         nodeId: input.nodeId,
         attemptNumber: input.attemptNumber,
         failFirstAttempt: options.failFirstReviewAttempt,
         createdAt: options.createdAt,
       });
+      await options.observer?.onReviewResult?.(input, result);
+      return result;
     },
     async runJudge(input) {
       return runFakeJudge({
@@ -82,19 +115,32 @@ export function createFixtureActivityMap(
         createdAt: options.createdAt,
       });
     },
-    mergeNodeCommit,
-    cleanupNodeWorktree,
+    async mergeNodeCommit(input) {
+      await options.observer?.onMergeNodeCommitStart?.(input);
+      const result = await runMergeNodeCommit(input);
+      await options.observer?.onMergeNodeCommit?.(input, result);
+      return result;
+    },
+    async cleanupNodeWorktree(input) {
+      const result = await runCleanupNodeWorktree(input);
+      await options.observer?.onCleanupNodeWorktree?.(input, result);
+      return result;
+    },
     async runBroadReviewer(input) {
-      return runFakeBroadReviewer({
+      const result = runFakeBroadReviewer({
         milestoneId: input.milestoneId,
         emitGap: options.emitBroadReviewGap,
       });
+      await options.observer?.onBroadReviewResult?.(input, result);
+      return result;
     },
     async runBroadJudge(input) {
-      return runFakeBroadJudge({
+      const result = runFakeBroadJudge({
         milestoneId: input.milestoneId,
         emitGap: options.emitBroadJudgeGap,
       });
+      await options.observer?.onBroadJudgeResult?.(input, result);
+      return result;
     },
   };
 }

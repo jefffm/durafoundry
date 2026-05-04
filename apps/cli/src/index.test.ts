@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { access, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,10 +8,165 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { TestWorkflowEnvironment } from '@temporalio/testing';
+import type { FactoryRunState } from '@durafoundry/workflows';
 
-import { runCli, type CliRunOutput } from './index.js';
+import { runCli, runCliWithOptions, type CliRunOutput } from './index.js';
 
 const execFileAsync = promisify(execFile);
+
+test('temporal fixture acceptance run proves repair, serial merge, gates, artifacts, query, and JSON output', async () => {
+  const repoRoot = repoRootFromDist();
+  const artifactRoot = await mkdtemp(join(tmpdir(), 'durafoundry-cli-acceptance-'));
+  const env = await createTemporalEnv();
+  const stateSamples: FactoryRunState[] = [];
+  const reviewEvents: Array<{ nodeId: string; attemptNumber: number; status: string }> = [];
+  const mergeEvents: string[] = [];
+  const cleanupEvents: string[] = [];
+  const broadReviewEvents: string[] = [];
+  const broadJudgeEvents: string[] = [];
+  let activeMerges = 0;
+  let maxActiveMerges = 0;
+
+  try {
+    const output = await runCliWithOptions(
+      [
+        'run',
+        '--spec',
+        join(repoRoot, 'docs', 'SPEC.md'),
+        '--fixture-repo',
+        '--artifact-root',
+        artifactRoot,
+        '--temporal-address',
+        env.address,
+        '--task-queue',
+        `durafoundry-cli-acceptance-${Date.now()}`,
+        '--start-worker',
+        '--auto-approve',
+        '--preserve-fixture',
+      ],
+      {
+        fixtureActivities: {
+          failFirstReviewAttempt: true,
+          observer: {
+            onReviewResult(input, result) {
+              reviewEvents.push({
+                nodeId: input.nodeId,
+                attemptNumber: input.attemptNumber,
+                status: result.report.status,
+              });
+            },
+            onMergeNodeCommitStart(input) {
+              activeMerges += 1;
+              maxActiveMerges = Math.max(maxActiveMerges, activeMerges);
+              mergeEvents.push(nodeIdFromBranch(input.branchName));
+            },
+            onMergeNodeCommit() {
+              activeMerges -= 1;
+            },
+            onCleanupNodeWorktree(input) {
+              cleanupEvents.push(input.nodeId ?? nodeIdFromBranch(input.branchName ?? ''));
+            },
+            onBroadReviewResult(input, result) {
+              broadReviewEvents.push(`${input.milestoneId}:${result.report.status}`);
+            },
+            onBroadJudgeResult(input, result) {
+              broadJudgeEvents.push(`${input.milestoneId}:${result.report.status}`);
+            },
+          },
+        },
+        onStateSample(state) {
+          stateSamples.push(structuredClone(state));
+        },
+      },
+    );
+
+    assert.equal(output.finalStatus, 'completed');
+    assert.deepEqual(structuredClone(output), output);
+    assert.equal(output.temporalAddress, env.address);
+    assert.equal(output.artifactRoot, artifactRoot);
+    assert.equal(output.fixtureRepoPath.startsWith(repoRoot), false);
+    assert.equal(output.fixtureRepoPath.includes(`${artifactRoot}/fixtures/`), true);
+    assert.deepEqual(Object.keys(output.nodeCommits).sort(), ['fixture-alpha', 'fixture-beta']);
+    assert.deepEqual(Object.keys(output.mergeCommits).sort(), ['fixture-alpha', 'fixture-beta']);
+
+    assert.ok(
+      stateSamples.some((state) => state.status === 'waiting_for_plan_approval'),
+      'expected a query sample while waiting for plan approval',
+    );
+    assert.ok(
+      stateSamples.some(
+        (state) => state.status === 'executing_dag' || Object.keys(state.nodes).length > 0,
+      ),
+      'expected a query sample after DAG execution started',
+    );
+
+    assert.deepEqual(
+      reviewEvents.filter((event) => event.status === 'fail').map((event) => event.nodeId).sort(),
+      ['fixture-alpha', 'fixture-beta'],
+    );
+    assert.deepEqual(
+      reviewEvents.filter((event) => event.status === 'pass').map((event) => event.nodeId).sort(),
+      ['fixture-alpha', 'fixture-beta'],
+    );
+    assert.ok(reviewEvents.some((event) => event.nodeId === 'fixture-alpha' && event.attemptNumber === 2));
+    assert.ok(reviewEvents.some((event) => event.nodeId === 'fixture-beta' && event.attemptNumber === 2));
+
+    assert.equal(maxActiveMerges, 1);
+    assert.deepEqual(mergeEvents.sort(), ['fixture-alpha', 'fixture-beta']);
+    assert.deepEqual(cleanupEvents.sort(), ['fixture-alpha', 'fixture-beta']);
+    assert.deepEqual(broadReviewEvents, ['fixture-milestone:pass']);
+    assert.deepEqual(broadJudgeEvents, ['fixture-milestone:pass']);
+
+    await assertCommitExists(output.fixtureRepoPath, output.nodeCommits['fixture-alpha'] ?? '');
+    await assertCommitExists(output.fixtureRepoPath, output.nodeCommits['fixture-beta'] ?? '');
+    await assertCommitExists(output.fixtureRepoPath, output.mergeCommits['fixture-alpha'] ?? '');
+    await assertCommitExists(output.fixtureRepoPath, output.mergeCommits['fixture-beta'] ?? '');
+    assert.equal(
+      await readFile(join(output.fixtureRepoPath, 'src', 'alpha.txt'), 'utf8'),
+      'fixture-alpha: repaired\n',
+    );
+    assert.equal(
+      await readFile(join(output.fixtureRepoPath, 'src', 'beta.txt'), 'utf8'),
+      'fixture-beta: repaired\n',
+    );
+    await assertMissing(join(artifactRoot, 'worktrees', output.runId, 'fixture-alpha'));
+    await assertMissing(join(artifactRoot, 'worktrees', output.runId, 'fixture-beta'));
+
+    const plan = parseJson<{ nodes: unknown[]; milestones: unknown[] }>(
+      await readFile(join(artifactRoot, 'plans', 'fixture-plan', 'plan.json'), 'utf8'),
+      'plan artifact',
+    );
+    assert.equal(plan.nodes.length, 2);
+    assert.equal(plan.milestones.length, 1);
+    assert.match(
+      await readFile(join(artifactRoot, 'plans', 'fixture-plan', 'nodes', 'fixture-alpha.md'), 'utf8'),
+      /Update `src\/alpha\.txt`/,
+    );
+    assert.match(
+      await readFile(
+        join(artifactRoot, 'plans', 'fixture-plan', 'snapshots', 'fixture-snapshot.json'),
+        'utf8',
+      ),
+      /"snapshotId": "fixture-snapshot"/,
+    );
+    assert.equal(
+      parseJson<{ repaired: boolean }>(
+        await readFile(
+          join(artifactRoot, 'fake-agent', 'fixture-alpha-attempt-2', 'session.json'),
+          'utf8',
+        ),
+        'fake agent session artifact',
+      ).repaired,
+      true,
+    );
+    assert.match(
+      await readFile(join(artifactRoot, 'fake-agent', 'fixture-alpha-attempt-2', 'diff.patch'), 'utf8'),
+      /fixture-alpha: repaired/,
+    );
+  } finally {
+    await env.teardown();
+  }
+});
 
 test('CLI run starts a Temporal worker, auto-approves through update, and prints JSON', async () => {
   const repoRoot = repoRootFromDist();
@@ -116,15 +271,31 @@ test('CLI fails clearly when Temporal is unavailable', async () => {
 
 function parseCliOutput(stdout: string): CliRunOutput {
   const lastLine = stdout.trim().split('\n').at(-1);
+  return parseJson<CliRunOutput>(lastLine ?? '', `CLI output: ${stdout}`);
+}
+
+function parseJson<T>(json: string, label: string): T {
   try {
-    return JSON.parse(lastLine ?? '') as CliRunOutput;
+    return JSON.parse(json) as T;
   } catch (cause) {
-    throw new Error(`CLI did not print valid JSON: ${stdout}`, { cause });
+    throw new Error(`Invalid JSON in ${label}`, { cause });
   }
 }
 
 function repoRootFromDist(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+}
+
+async function assertCommitExists(repoPath: string, commitSha: string): Promise<void> {
+  await execFileAsync('git', ['-C', repoPath, 'cat-file', '-e', `${commitSha}^{commit}`]);
+}
+
+async function assertMissing(path: string): Promise<void> {
+  await assert.rejects(access(path), /ENOENT/);
+}
+
+function nodeIdFromBranch(branchName: string): string {
+  return branchName.split('/').at(-1) ?? branchName;
 }
 
 async function createTemporalEnv(): Promise<TestWorkflowEnvironment> {

@@ -5,12 +5,49 @@ This file is the handoff point for iterative `/goal` execution. Read it at the b
 ## Current State
 
 - Active plan: `docs/execution-plan-temporal-v0.md`.
-- Last completed chunk: Temporal V0 Chunk 6, Temporal Cancellation, Cleanup, And Failure Semantics.
-- Next chunk: Temporal V0 Chunk 7, Temporal Fixture Acceptance. Stop before starting because this is a human review gate.
+- Last completed chunk: Temporal V0 Chunk 7, Temporal Fixture Acceptance.
+- Next chunk: none. Temporal V0 fixture plan is complete; stop before starting work outside this plan.
 - Current branch: `main`.
 - Last validation date: 2026-05-04.
 
 ## Chunk Log
+
+### Temporal V0 Chunk 7: Temporal Fixture Acceptance
+
+Status: complete.
+
+Acceptance evidence:
+
+- Added a real Temporal-backed CLI acceptance test named `temporal fixture acceptance run proves repair, serial merge, gates, artifacts, query, and JSON output`.
+- The acceptance test starts a real Temporal test server and runs the CLI code with an in-process fixture Worker.
+- The acceptance test samples workflow Query state before and after approval, submits approval through a Temporal Update, and asserts the final CLI output is machine-readable JSON-shaped data.
+- The fixture Worker now supports optional observer hooks for tests, allowing the acceptance test to prove reviewer repair, serial merge, cleanup, and broad milestone gate calls without changing workflow behavior.
+- The acceptance run forces fake reviewer failure on first attempt and proves both fixture nodes repair on attempt 2 before merging.
+- The acceptance run proves two fixture nodes merge with maximum active merge count 1 and that both node worktrees are cleaned.
+- The acceptance run proves broad review and broad judge gates run for `fixture-milestone`.
+- The acceptance run asserts local artifact contents: plan JSON, node markdown body, snapshot manifest, fake agent session, and fake diff artifact.
+- The acceptance run asserts the generated fixture repository is outside the DuraFoundry implementation checkout and under the artifact root.
+- Updated `docs/v0-hardening-review.md` to state that the Temporal runtime gap is closed.
+- Updated `README.md` with the Temporal fixture acceptance command and what it proves.
+
+Validation evidence:
+
+- `nix develop -c npm test --workspace @durafoundry/cli -- --test-name-pattern "temporal|acceptance|fixture"` passed.
+- `nix develop -c npm run typecheck --workspaces --if-present` passed.
+- `nix develop -c npm test --workspaces --if-present` passed.
+- `nix develop -c npm audit` passed with 0 vulnerabilities.
+- `nix develop -c npm run ubs:diff` passed with 0 warnings and 0 critical issues after fixing guarded JSON parsing findings.
+- `git diff --check` passed.
+
+Fresh-eyes review:
+
+- `$fresh-eyes` is not installed in this Codex session, so a manual fresh-eyes review was performed.
+- Finding: the existing CLI smoke proved a Temporal SDK path but did not explicitly prove node repair, milestone gates, artifact contents, live Query sampling, or the acceptance command pattern.
+- Fix: added a dedicated acceptance test that exercises and asserts each of those behaviors.
+- Finding: UBS flagged unguarded `JSON.parse` calls in the new test.
+- Fix: replaced clone-style JSON parsing with `structuredClone` and routed artifact/CLI JSON parsing through a guarded helper.
+- Finding: `docs/v0-hardening-review.md` still said the CLI used the deterministic scaffold directly.
+- Fix: updated the review to record the SDK Client/Worker path and removed the local Temporal demo from nonblocking next steps.
 
 ### Temporal V0 Chunk 6: Temporal Cancellation, Cleanup, And Failure Semantics
 

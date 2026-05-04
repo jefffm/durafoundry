@@ -15,8 +15,8 @@ Do not add Flue-backed agents, dashboard/API work, protected repository support,
 
 ## Execution Status
 
-- Last completed chunk: Chunk 6, Temporal Cancellation, Cleanup, And Failure Semantics.
-- Next chunk: Chunk 7, Temporal Fixture Acceptance. Stop before starting because this is a human review gate.
+- Last completed chunk: Chunk 7, Temporal Fixture Acceptance.
+- Next chunk: none. Temporal V0 fixture plan is complete; stop before starting work outside this plan.
 - Progress log: `progress.md`.
 
 ## Operating Rules
@@ -98,7 +98,7 @@ Resolved in this Temporal plan so far:
 
 Remaining gaps:
 
-- Final Temporal-backed fixture acceptance and hardening-review updates are still pending.
+- No Temporal V0 fixture gaps remain in this plan.
 
 Baseline validation:
 
